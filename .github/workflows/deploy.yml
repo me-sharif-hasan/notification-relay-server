@@ -54,9 +54,9 @@ jobs:
             npm ci --omit=dev
 
             if pm2 describe notification-relay-server > /dev/null 2>&1; then
-              pm2 restart notification-relay-server
+              pm2 restart notification-relay-server --update-env
             else
               pm2 start server.js --name notification-relay-server
-              pm2 save
             fi
+            pm2 save
           ENDSSH
