@@ -95,6 +95,7 @@ function adminHTML(tokens, settings) {
       <tr class="${isActive ? '' : 'row-revoked'}${isDebug && skipDebug ? ' row-skipped' : ''}">
         <td class="hash" title="${t.hash}">${t.hash.slice(0, 12)}…</td>
         <td class="pkg">${t.packageName ? `<span title="${t.packageName}">${t.packageName}${debugTag}</span>` : '<span class="muted">—</span>'}</td>
+        <td class="hits">${t.hitCount > 0 ? `<span class="hit-count">${t.hitCount.toLocaleString()}</span>` : '<span class="muted">0</span>'}</td>
         <td>${fmtDate(t.createdAt)}</td>
         <td>${fmtDate(t.lastSeenAt)}</td>
         <td>${badge}</td>
@@ -149,6 +150,8 @@ function adminHTML(tokens, settings) {
     .badge.debug { background: #451a03; color: #fb923c; margin-left: 4px; padding: 2px 7px; font-size: 0.7rem; }
     .btn-revoke { background: #7f1d1d; color: #fca5a5; border: none; border-radius: 6px; padding: 5px 12px; font-size: 0.8rem; cursor: pointer; transition: background 0.15s; }
     .btn-revoke:hover { background: #991b1b; }
+    .hits { text-align: right; width: 80px; }
+    .hit-count { font-variant-numeric: tabular-nums; font-weight: 600; color: #38bdf8; }
     .muted { color: #475569; }
     .empty { text-align: center; padding: 48px; color: #475569; }
     #toast { position: fixed; bottom: 24px; right: 24px; background: #166534; color: #bbf7d0; padding: 12px 20px; border-radius: 8px; font-size: 0.875rem; display: none; }
@@ -198,6 +201,7 @@ function adminHTML(tokens, settings) {
               <tr>
                 <th>Token Hash</th>
                 <th>Package Name</th>
+                <th>Hits</th>
                 <th>Created</th>
                 <th>Last Seen</th>
                 <th>Status</th>
@@ -276,6 +280,7 @@ app.get('/admin', async (request, reply) => {
       hash: doc.id,
       fcmToken: d.fcmToken ?? '',
       packageName: d.packageName ?? null,
+      hitCount: d.hitCount ?? 0,
       createdAt: ts(d.createdAt),
       revokedAt: ts(d.revokedAt),
       lastSeenAt: ts(d.lastSeenAt)
@@ -347,7 +352,10 @@ app.post('/alert', async (request, reply) => {
   const { fcmToken, packageName } = doc.data()
   const { metric, level, value, host, timestamp } = request.body ?? {}
 
-  await docRef.update({ lastSeenAt: admin.firestore.FieldValue.serverTimestamp() })
+  await docRef.update({
+    lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+    hitCount: admin.firestore.FieldValue.increment(1)
+  })
 
   // Check skip-debug setting
   const settings = await getSettings()
