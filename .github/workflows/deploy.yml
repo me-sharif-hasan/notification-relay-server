@@ -1,0 +1,62 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write service account
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+        run: echo "$SERVICE_ACCOUNT_JSON" > serviceaccount.json
+
+      - name: Write .env
+        run: |
+          cat > .env << EOF
+          PORT=${{ secrets.APP_PORT }}
+          SEND_FCM=${{ secrets.SEND_FCM }}
+          ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}
+          EOF
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Sync files to VPS
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            -e "ssh -i ~/.ssh/id_rsa" \
+            ./ ubuntu@${{ secrets.VPS_HOST }}:/home/ubuntu/notification-relay-server/
+
+      - name: Install dependencies & restart
+        run: |
+          ssh -i ~/.ssh/id_rsa ubuntu@${{ secrets.VPS_HOST }} bash << 'ENDSSH'
+            set -e
+            cd /home/ubuntu/notification-relay-server
+
+            # Install PM2 globally if not present
+            if ! command -v pm2 &> /dev/null; then
+              npm install -g pm2
+            fi
+
+            npm ci --omit=dev
+
+            if pm2 describe notification-relay-server > /dev/null 2>&1; then
+              pm2 restart notification-relay-server
+            else
+              pm2 start server.js --name notification-relay-server
+              pm2 save
+            fi
+          ENDSSH
