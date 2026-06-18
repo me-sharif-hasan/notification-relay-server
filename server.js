@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import admin from 'firebase-admin'
 import { createHash } from 'crypto'
 import { readFileSync } from 'fs'
+import { initAuth, verifyIntegrityToken, checkVerdicts, signJwt, verifyJwt } from './auth.js'
 
 // Load env
 const env = {}
@@ -16,6 +17,7 @@ const getEnv = k => process.env[k] ?? env[k]
 // Firebase Admin init
 const serviceAccount = JSON.parse(readFileSync('./serviceaccount.json', 'utf8'))
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) })
+initAuth(serviceAccount)
 
 const db = admin.firestore()
 const TOKENS = 'integrationTokens'
@@ -261,7 +263,127 @@ function adminHTML(tokens, settings) {
 </html>`
 }
 
+const DEEPSEEK_BASE = 'https://api.deepseek.com'
+
 const app = Fastify({ logger: true })
+
+// JWT bearer guard for DeepSeek proxy routes
+async function requireJwt(request, reply) {
+  const auth = request.headers.authorization
+  if (!auth?.startsWith('Bearer ')) {
+    return reply.code(401).send({ success: false, error: 'Missing Bearer token' })
+  }
+  try {
+    request.jwtPayload = verifyJwt(auth.slice(7), getEnv('JWT_SECRET'))
+  } catch {
+    return reply.code(401).send({ success: false, error: 'Invalid or expired token' })
+  }
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+// POST /api/auth/integrity-token — verify Play Integrity, return 15-min JWT
+app.post('/api/auth/integrity-token', async (request, reply) => {
+  const { integrityToken, packageName } = request.body ?? {}
+
+  if (!integrityToken || !packageName) {
+    return reply.code(400).send({ success: false, error: 'integrityToken and packageName are required' })
+  }
+
+  let verdict
+  try {
+    verdict = await verifyIntegrityToken(integrityToken, packageName)
+  } catch (err) {
+    app.log.error(err, 'play integrity verify failed')
+    return reply.code(500).send({ success: false, error: err.message })
+  }
+
+  const check = checkVerdicts(verdict)
+  if (!check.ok) {
+    return reply.code(403).send({
+      success: false,
+      error: check.error,
+      verdict: { appRecognition: check.appRecognition, deviceRecognition: check.deviceRecognition }
+    })
+  }
+
+  // Premium check — placeholder, always false until Firestore premium collection is wired in
+  const isPremium = false
+
+  const token = signJwt(
+    { packageName, appRecognition: check.appRecognition, isPremium },
+    getEnv('JWT_SECRET')
+  )
+
+  app.log.info({ packageName, appRecognition: check.appRecognition, action: 'jwt_issued' })
+  return { success: true, token, expiresIn: 900 }
+})
+
+// ─── DeepSeek Proxy ───────────────────────────────────────────────────────────
+
+// GET /ping — validate API key against DeepSeek /v1/models
+app.get('/ping', { preHandler: requireJwt }, async (request, reply) => {
+  const upstream = await fetch(`${DEEPSEEK_BASE}/v1/models`, {
+    headers: { Authorization: `Bearer ${getEnv('DEEPSEEK_API_KEY')}` }
+  })
+
+  if (!upstream.ok) {
+    const body = await upstream.json().catch(() => ({}))
+    return reply.code(upstream.status).send({ ok: false, error: body?.error?.message ?? 'DeepSeek error' })
+  }
+
+  return { ok: true }
+})
+
+// POST /v1/chat/completions — proxy to DeepSeek, supports streaming and tool calls
+app.post('/v1/chat/completions', { preHandler: requireJwt }, async (request, reply) => {
+  const body = request.body
+  const isStream = body?.stream === true
+
+  const upstream = await fetch(`${DEEPSEEK_BASE}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getEnv('DEEPSEEK_API_KEY')}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  })
+
+  // Non-streaming: pass JSON straight through
+  if (!isStream) {
+    const json = await upstream.json()
+    return reply.code(upstream.status).send(json)
+  }
+
+  // Streaming: proxy SSE chunks directly — do not buffer
+  if (!upstream.ok) {
+    const err = await upstream.json().catch(() => ({ error: { message: 'DeepSeek stream error' } }))
+    return reply.code(upstream.status).send(err)
+  }
+
+  reply.hijack()
+  const raw = reply.raw
+  raw.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'   // tell Nginx not to buffer SSE
+  })
+
+  const reader = upstream.body.getReader()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) raw.write(value)
+    }
+  } catch (err) {
+    app.log.error(err, 'SSE stream error')
+  } finally {
+    reader.releaseLock()
+    raw.end()
+  }
+})
 
 // GET /admin — protected admin dashboard
 app.get('/admin', async (request, reply) => {
