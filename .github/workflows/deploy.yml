@@ -23,7 +23,7 @@ jobs:
           PORT=${{ secrets.APP_PORT }}
           SEND_FCM=${{ secrets.SEND_FCM }}
           ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}
-          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          JWT_SECRET=${{ secrets.JWT_SECRET_KEY }}
           DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }}
           EOF
 
