@@ -290,6 +290,15 @@ app.post('/api/auth/integrity-token', async (request, reply) => {
     return reply.code(400).send({ success: false, error: 'integrityToken and packageName are required' })
   }
 
+  const settings = await getSettings()
+
+  // Debug builds bypass Play Integrity when the admin toggle is on
+  if (packageName.endsWith('.debug') && settings.skipDebugPackages) {
+    const token = signJwt({ packageName, appRecognition: 'DEBUG_BYPASS', isPremium: false }, getEnv('JWT_SECRET'))
+    app.log.info({ packageName, action: 'jwt_issued_debug_bypass' })
+    return { success: true, token, expiresIn: 900 }
+  }
+
   let verdict
   try {
     verdict = await verifyIntegrityToken(integrityToken, packageName)
