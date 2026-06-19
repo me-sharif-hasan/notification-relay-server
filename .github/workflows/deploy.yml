@@ -24,7 +24,13 @@ jobs:
           SEND_FCM=${{ secrets.SEND_FCM }}
           ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}
           JWT_SECRET=${{ secrets.JWT_SECRET_KEY }}
-          DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL=${{ secrets.GEMINI_MODEL }}
+          GOOGLE_PLAY_PACKAGE_NAME=${{ secrets.GOOGLE_PLAY_PACKAGE_NAME }}
+          PLAY_IAP_PRODUCT_ID=${{ secrets.PLAY_IAP_PRODUCT_ID }}
+          PLAY_SUBSCRIPTION_PRODUCT_ID=${{ secrets.PLAY_SUBSCRIPTION_PRODUCT_ID }}
+          PLAY_OFFER_TOKEN_FULL=${{ secrets.PLAY_OFFER_TOKEN_FULL }}
+          PLAY_OFFER_TOKEN_DISCOUNTED=${{ secrets.PLAY_OFFER_TOKEN_DISCOUNTED }}
           EOF
 
       - name: Setup SSH

@@ -1,5 +1,4 @@
 import { GoogleAuth } from 'google-auth-library'
-import jwt from 'jsonwebtoken'
 
 let _googleAuth = null
 
@@ -10,8 +9,6 @@ export function initAuth(serviceAccount) {
   })
 }
 
-// Calls Google Play Integrity API to decode and verify an integrity token.
-// Returns the full verdict object: { tokenPayloadExternal: { ... } }
 export async function verifyIntegrityToken(integrityToken, packageName) {
   const client = await _googleAuth.getClient()
   const { token } = await client.getAccessToken()
@@ -36,8 +33,6 @@ export async function verifyIntegrityToken(integrityToken, packageName) {
   return res.json()
 }
 
-// Checks app + device verdicts from the Play Integrity response.
-// Returns { ok, error, appRecognition, deviceRecognition }
 export function checkVerdicts(verdict) {
   const appRecognition = verdict?.tokenPayloadExternal?.appIntegrity?.appRecognitionVerdict
   const deviceRecognition = verdict?.tokenPayloadExternal?.deviceIntegrity?.deviceRecognitionVerdict ?? []
@@ -55,12 +50,4 @@ export function checkVerdicts(verdict) {
   }
 
   return { ok: true, appRecognition, deviceRecognition }
-}
-
-export function signJwt(payload, secret) {
-  return jwt.sign(payload, secret, { expiresIn: '15m' })
-}
-
-export function verifyJwt(token, secret) {
-  return jwt.verify(token, secret) // throws on invalid or expired
 }
