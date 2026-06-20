@@ -1,6 +1,6 @@
 import Fastify from 'fastify'
 import { initAuth } from './auth/integrity.js'
-import { serviceAccount } from './firebase.js'
+import { serviceAccount, legacyServiceAccount } from './firebase.js'
 import { getEnv } from './config.js'
 import { authRoutes } from './routes/auth.js'
 import { chatRoutes } from './routes/chat.js'
@@ -10,7 +10,7 @@ import { integrationRoutes } from './routes/integrations.js'
 import { alertRoutes } from './routes/alert.js'
 import { adminRoutes } from './routes/admin.js'
 
-initAuth(serviceAccount)
+initAuth(serviceAccount, legacyServiceAccount)  // legacyServiceAccount is null if file absent — initAuth skips nulls
 
 const app = Fastify({ logger: true })
 

@@ -1,24 +1,23 @@
 import { GoogleAuth } from 'google-auth-library'
 
-let _googleAuth = null
+const _auths = []  // ordered list of GoogleAuth instances to try
 
-export function initAuth(serviceAccount) {
-  _googleAuth = new GoogleAuth({
-    credentials: serviceAccount,
-    scopes: ['https://www.googleapis.com/auth/playintegrity']
-  })
+export function initAuth(...serviceAccounts) {
+  for (const sa of serviceAccounts) {
+    if (!sa) continue
+    _auths.push(new GoogleAuth({
+      credentials: sa,
+      scopes: ['https://www.googleapis.com/auth/playintegrity']
+    }))
+  }
 }
 
-export async function verifyIntegrityToken(integrityToken, packageName) {
-  const client = await _googleAuth.getClient()
+async function decodeWithAuth(googleAuth, integrityToken, packageName) {
+  const client = await googleAuth.getClient()
   const { token } = await client.getAccessToken()
+  const email = client.email ?? client.credentials?.client_email ?? 'unknown'
 
-  // Log service account identity and full token for debugging
-  console.info('[integrity] request', {
-    packageName,
-    serviceAccount: client.email ?? client.credentials?.client_email ?? 'unknown',
-    integrityToken,  // full token — remove after debugging
-  })
+  console.info('[integrity] trying', { packageName, serviceAccount: email })
 
   const res = await fetch(
     `https://playintegrity.googleapis.com/v1/${packageName}:decodeIntegrityToken`,
@@ -34,23 +33,34 @@ export async function verifyIntegrityToken(integrityToken, packageName) {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    console.error('[integrity] API error', {
-      status: res.status,
-      packageName,
-      errorCode: body?.error?.code,
-      errorMessage: body?.error?.message,
-      errorDetails: JSON.stringify(body?.error?.details)
-    })
-    throw new Error(body?.error?.message ?? `Play Integrity API error ${res.status}`)
+    const err = new Error(body?.error?.message ?? `Play Integrity API error ${res.status}`)
+    err.status = res.status
+    err.serviceAccount = email
+    console.warn('[integrity] attempt failed', { serviceAccount: email, status: res.status, message: err.message })
+    throw err
   }
 
-  const verdict = await res.json()
-  console.info('[integrity] API success', {
-    packageName,
-    appRecognition: verdict?.tokenPayloadExternal?.appIntegrity?.appRecognitionVerdict,
-    deviceRecognition: verdict?.tokenPayloadExternal?.deviceIntegrity?.deviceRecognitionVerdict
-  })
-  return verdict
+  return { verdict: await res.json(), serviceAccount: email }
+}
+
+export async function verifyIntegrityToken(integrityToken, packageName) {
+  let lastErr
+  for (const googleAuth of _auths) {
+    try {
+      const { verdict, serviceAccount } = await decodeWithAuth(googleAuth, integrityToken, packageName)
+      console.info('[integrity] success', {
+        packageName,
+        serviceAccount,
+        appRecognition: verdict?.tokenPayloadExternal?.appIntegrity?.appRecognitionVerdict,
+        deviceRecognition: verdict?.tokenPayloadExternal?.deviceIntegrity?.deviceRecognitionVerdict
+      })
+      return verdict
+    } catch (err) {
+      lastErr = err
+      if (err.status !== 403) break  // only retry on 403 (not authorized) — other errors are not recoverable
+    }
+  }
+  throw lastErr
 }
 
 export function checkVerdicts(verdict) {

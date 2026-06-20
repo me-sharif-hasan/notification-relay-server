@@ -15,7 +15,12 @@ jobs:
       - name: Write service account
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
-        run: echo "$SERVICE_ACCOUNT_JSON" > serviceaccount.json
+          SERVICE_ACCOUNT_LEGACY_JSON: ${{ secrets.SERVICE_ACCOUNT_LEGACY_JSON }}
+        run: |
+          echo "$SERVICE_ACCOUNT_JSON" > serviceaccount.json
+          if [ -n "$SERVICE_ACCOUNT_LEGACY_JSON" ]; then
+            echo "$SERVICE_ACCOUNT_LEGACY_JSON" > serviceaccount_legacy.json
+          fi
 
       - name: Write .env
         run: |
