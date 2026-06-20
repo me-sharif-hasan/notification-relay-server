@@ -227,8 +227,8 @@ export async function ping() {
   }
 }
 
-export async function chat(openAIBody) {
-  const model      = getEnv('GEMINI_MODEL') ?? 'gemini-2.5-flash'
+export async function chat(openAIBody, { model: modelOverride } = {}) {
+  const model      = modelOverride ?? getEnv('GEMINI_MODEL') ?? 'gemini-2.5-flash'
   const geminiBody = buildGeminiBody(openAIBody)
 
   const upstream = await fetch(
@@ -246,10 +246,8 @@ export async function chat(openAIBody) {
   return geminiToOpenAI(chatId, await upstream.json())
 }
 
-// Returns Promise<AsyncGenerator> — awaiting lets the route catch HTTP errors
-// before hijacking the reply; then iterate the generator to stream chunks.
-export async function stream(openAIBody) {
-  const model      = getEnv('GEMINI_MODEL') ?? 'gemini-2.5-flash'
+export async function stream(openAIBody, { model: modelOverride } = {}) {
+  const model      = modelOverride ?? getEnv('GEMINI_MODEL') ?? 'gemini-2.5-flash'
   const geminiBody = buildGeminiBody(openAIBody)
 
   const upstream = await fetch(

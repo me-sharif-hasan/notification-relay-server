@@ -26,11 +26,11 @@ export async function ping() {
 }
 
 // DeepSeek is OpenAI-compatible — no translation needed, just swap the model name.
-export async function chat(openAIBody) {
+export async function chat(openAIBody, { model: modelOverride } = {}) {
   const upstream = await fetch(`${BASE}/chat/completions`, {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ ...openAIBody, model: model(), stream: false })
+    body: JSON.stringify({ ...openAIBody, model: modelOverride ?? model(), stream: false })
   })
   if (!upstream.ok) {
     const err = await upstream.json().catch(() => ({}))
@@ -64,13 +64,13 @@ async function* readStream(body) {
   }
 }
 
-export async function stream(openAIBody) {
+export async function stream(openAIBody, { model: modelOverride } = {}) {
   const upstream = await fetch(`${BASE}/chat/completions`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({
       ...openAIBody,
-      model: model(),
+      model: modelOverride ?? model(),
       stream: true,
       stream_options: { include_usage: true }
     })

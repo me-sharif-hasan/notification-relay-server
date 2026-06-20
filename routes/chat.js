@@ -12,7 +12,7 @@ import { isBlocklisted } from '../services/blocklist.js'
 import { getTask, claimFirstLlmCall } from '../services/agentTasks.js'
 import { rateLimitConfig } from '../config.js'
 import { getSettings } from '../services/settings.js'
-import { getProvider } from '../providers/index.js'
+import { getProvider, getProviderForModel } from '../providers/index.js'
 
 export async function chatRoutes(app) {
   // GET /ping — verify active provider reachability
@@ -87,14 +87,18 @@ export async function chatRoutes(app) {
     }
 
     // 7. Dispatch to active provider
-    const settings = await getSettings()
-    const provider  = getProvider(settings.provider ?? 'gemini')
+    // If the client specifies a model name, use it to select both the provider
+    // and the exact model variant. Otherwise fall back to the admin-configured provider.
+    const settings      = await getSettings()
+    const modelRouted   = getProviderForModel(body.model)
+    const provider      = modelRouted ? modelRouted.provider : getProvider(settings.provider ?? 'gemini')
+    const providerOpts  = modelRouted ? { model: modelRouted.model } : {}
 
     // ── Non-streaming ────────────────────────────────────────────────────────
     if (!isStream) {
       let res
       try {
-        res = await provider.chat(body)
+        res = await provider.chat(body, providerOpts)
       } catch (err) {
         // Never forward provider 401/403 — those are upstream auth errors, not
         // client auth errors. The client would misinterpret them as a bad JWT
@@ -111,7 +115,7 @@ export async function chatRoutes(app) {
     // Await the stream init so HTTP errors surface before we hijack the reply.
     let gen
     try {
-      gen = await provider.stream(body)
+      gen = await provider.stream(body, providerOpts)
     } catch (err) {
       const status = (err.status === 401 || err.status === 403) ? 502 : (err.status ?? 502)
       request.log.error({ providerStatus: err.status, providerError: err.message }, 'upstream provider error')
