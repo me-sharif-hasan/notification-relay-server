@@ -35,6 +35,16 @@ export async function authRoutes(app) {
       subscriptionPurchaseToken   // new
     } = request.body ?? {}
 
+    app.log.info({
+      action: 'auth_request',
+      packageName,
+      deviceId,
+      hasIntegrityToken: !!integrityToken,
+      integrityTokenLength: integrityToken?.length,
+      hasIapPurchaseToken: !!iapPurchaseToken,
+      hasSubscriptionPurchaseToken: !!subscriptionPurchaseToken
+    })
+
     if (!integrityToken || !packageName) {
       return reply.code(400).send({ success: false, error: 'integrityToken and packageName are required' })
     }

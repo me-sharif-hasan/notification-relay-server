@@ -27,10 +27,24 @@ export async function verifyIntegrityToken(integrityToken, packageName) {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
+    console.error('[integrity] API error', {
+      status: res.status,
+      packageName,
+      integrityTokenLength: integrityToken?.length,
+      errorCode: body?.error?.code,
+      errorMessage: body?.error?.message,
+      errorDetails: body?.error?.details
+    })
     throw new Error(body?.error?.message ?? `Play Integrity API error ${res.status}`)
   }
 
-  return res.json()
+  const verdict = await res.json()
+  console.info('[integrity] API success', {
+    packageName,
+    appRecognition: verdict?.tokenPayloadExternal?.appIntegrity?.appRecognitionVerdict,
+    deviceRecognition: verdict?.tokenPayloadExternal?.deviceIntegrity?.deviceRecognitionVerdict
+  })
+  return verdict
 }
 
 export function checkVerdicts(verdict) {
