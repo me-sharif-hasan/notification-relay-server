@@ -5,25 +5,82 @@ import {
   incrementDailyRequests,
   getDailyTokens,
   addDailyTokens,
-  secondsUntilMidnight
+  secondsUntilMidnight,
+  incrementMonthlyTasks,
+  decrementMonthlyTasks
 } from '../services/rateLimitFirestore.js'
 import { isBlocklisted } from '../services/blocklist.js'
 import { getTask, claimFirstLlmCall } from '../services/agentTasks.js'
-import { incrementMonthlyTasks, decrementMonthlyTasks } from '../services/rateLimitFirestore.js'
 import { getEnv, GEMINI_BASE, rateLimitConfig } from '../config.js'
 
-// Translates OpenAI messages array → Gemini contents + systemInstruction
+// ─── OpenAI → Gemini translation ─────────────────────────────────────────────
+
+// Build tool_call_id → function name lookup from message history
+function buildToolCallIdMap(messages) {
+  const map = {}
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        map[tc.id] = tc.function.name
+      }
+    }
+  }
+  return map
+}
+
+// Translate OpenAI messages array → Gemini contents + systemInstruction
+// Handles: text, tool_calls (assistant), tool results, system
 function toGeminiContents(messages = []) {
+  const toolCallIdMap = buildToolCallIdMap(messages)
+
   const systemParts = messages
     .filter(m => m.role === 'system')
     .map(m => ({ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }))
 
-  const contents = messages
-    .filter(m => m.role !== 'system')
-    .map(m => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
-    }))
+  const contents = []
+
+  for (const msg of messages) {
+    if (msg.role === 'system') continue
+
+    if (msg.role === 'user') {
+      contents.push({
+        role: 'user',
+        parts: [{ text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) }]
+      })
+
+    } else if (msg.role === 'assistant') {
+      if (msg.tool_calls?.length) {
+        // assistant with tool calls → Gemini functionCall parts
+        contents.push({
+          role: 'model',
+          parts: msg.tool_calls.map(tc => ({
+            functionCall: {
+              name: tc.function.name,
+              args: JSON.parse(tc.function.arguments)
+            }
+          }))
+        })
+      } else {
+        contents.push({
+          role: 'model',
+          parts: [{ text: msg.content ?? '' }]
+        })
+      }
+
+    } else if (msg.role === 'tool') {
+      // tool result → Gemini functionResponse
+      const name = toolCallIdMap[msg.tool_call_id] ?? msg.tool_call_id
+      contents.push({
+        role: 'user',
+        parts: [{
+          functionResponse: {
+            name,
+            response: { output: msg.content }
+          }
+        }]
+      })
+    }
+  }
 
   return {
     contents,
@@ -31,38 +88,143 @@ function toGeminiContents(messages = []) {
   }
 }
 
-// Converts one Gemini SSE data payload → OpenAI chunk shape
-function geminiChunkToOpenAI(id, raw) {
-  try {
-    const d = JSON.parse(raw)
-    const text         = d?.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-    const finishReason = d?.candidates?.[0]?.finishReason
-    const usage        = d?.usageMetadata
+// Translate OpenAI tools + tool_choice → Gemini tools + tool_config
+function toGeminiTools(tools, toolChoice) {
+  if (!tools?.length) return {}
+
+  const modeMap = { auto: 'AUTO', none: 'NONE', required: 'ANY' }
+  const mode = typeof toolChoice === 'string' ? (modeMap[toolChoice] ?? 'AUTO') : 'AUTO'
+
+  return {
+    tools: [{
+      functionDeclarations: tools
+        .filter(t => t.type === 'function')
+        .map(t => ({
+          name: t.function.name,
+          description: t.function.description,
+          parameters: t.function.parameters
+        }))
+    }],
+    tool_config: {
+      function_calling_config: { mode }
+    }
+  }
+}
+
+// ─── Gemini → OpenAI translation ─────────────────────────────────────────────
+
+// Translate a full Gemini generateContent response → OpenAI chat.completion
+function geminiToOpenAI(chatId, body) {
+  const candidate = body?.candidates?.[0]
+  const parts     = candidate?.content?.parts ?? []
+  const usage     = body?.usageMetadata
+
+  const usageOut = {
+    prompt_tokens:     usage?.promptTokenCount     ?? 0,
+    completion_tokens: usage?.candidatesTokenCount ?? 0,
+    total_tokens:      usage?.totalTokenCount      ?? 0
+  }
+
+  const funcParts = parts.filter(p => p.functionCall)
+
+  if (funcParts.length > 0) {
     return {
-      id,
+      id: chatId,
+      object: 'chat.completion',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: funcParts.map((p, i) => ({
+            id: `call_${p.functionCall.name}_${String(i).padStart(3, '0')}`,
+            type: 'function',
+            function: {
+              name: p.functionCall.name,
+              arguments: JSON.stringify(p.functionCall.args ?? {})
+            }
+          }))
+        },
+        finish_reason: 'tool_calls'
+      }],
+      usage: usageOut
+    }
+  }
+
+  const text = parts.filter(p => p.text != null).map(p => p.text).join('')
+  return {
+    id: chatId,
+    object: 'chat.completion',
+    choices: [{
+      index: 0,
+      message: { role: 'assistant', content: text },
+      finish_reason: 'stop'
+    }],
+    usage: usageOut
+  }
+}
+
+// Translate one Gemini SSE data payload → OpenAI SSE chunk
+function geminiChunkToOpenAI(chatId, raw) {
+  try {
+    const d         = JSON.parse(raw)
+    const parts     = d?.candidates?.[0]?.content?.parts ?? []
+    const finish    = d?.candidates?.[0]?.finishReason
+    const usage     = d?.usageMetadata
+    const funcParts = parts.filter(p => p.functionCall)
+
+    const usageOut = usage ? {
+      usage: {
+        prompt_tokens:     usage.promptTokenCount     ?? 0,
+        completion_tokens: usage.candidatesTokenCount ?? 0,
+        total_tokens:      usage.totalTokenCount      ?? 0
+      }
+    } : {}
+
+    if (funcParts.length > 0) {
+      return {
+        id: chatId,
+        object: 'chat.completion.chunk',
+        choices: [{
+          index: 0,
+          delta: {
+            role: 'assistant',
+            content: null,
+            tool_calls: funcParts.map((p, i) => ({
+              index: i,
+              id: `call_${p.functionCall.name}_${String(i).padStart(3, '0')}`,
+              type: 'function',
+              function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args ?? {}) }
+            }))
+          },
+          finish_reason: 'tool_calls'
+        }],
+        ...usageOut
+      }
+    }
+
+    const text = parts.filter(p => p.text != null).map(p => p.text).join('')
+    return {
+      id: chatId,
       object: 'chat.completion.chunk',
       choices: [{
         index: 0,
-        delta: finishReason ? {} : { content: text },
-        finish_reason: finishReason === 'STOP' ? 'stop' : null
+        delta: finish ? {} : { content: text },
+        finish_reason: finish === 'STOP' ? 'stop' : null
       }],
-      ...(usage && {
-        usage: {
-          prompt_tokens:     usage.promptTokenCount     ?? 0,
-          completion_tokens: usage.candidatesTokenCount ?? 0,
-          total_tokens:      usage.totalTokenCount      ?? 0
-        }
-      })
+      ...usageOut
     }
   } catch {
     return null
   }
 }
 
+// ─── Route ────────────────────────────────────────────────────────────────────
+
 export async function chatRoutes(app) {
   // GET /ping — verify Gemini reachability
   app.get('/ping', { preHandler: requireJwt }, async (request, reply) => {
-    const model = getEnv('GEMINI_MODEL') ?? 'gemini-2.0-flash'
+    const model = getEnv('GEMINI_MODEL') ?? 'gemini-2.5-flash'
     const res = await fetch(
       `${GEMINI_BASE}/${model}?key=${getEnv('GEMINI_API_KEY')}`,
       { headers: { 'Content-Type': 'application/json' } }
@@ -77,12 +239,12 @@ export async function chatRoutes(app) {
   // POST /v1/chat/completions — Gemini relay with full subscription guard
   app.post('/v1/chat/completions', { preHandler: requireJwt }, async (request, reply) => {
     const { sub, plan, deviceId, isPremium } = request.jwtPayload
-    const identity    = sub ?? deviceId                              // backward-compat with old JWTs
-    const effectivePlan = plan ?? (isPremium ? 'subscriber' : 'free') // backward-compat with old JWTs
-    const body        = request.body
-    const isStream    = body?.stream === true
-    const taskId      = request.headers['x-task-id']
-    const limits      = rateLimitConfig()
+    const identity      = sub ?? deviceId
+    const effectivePlan = plan ?? (isPremium ? 'subscriber' : 'free')
+    const body          = request.body
+    const isStream      = body?.stream === true
+    const taskId        = request.headers['x-task-id']
+    const limits        = rateLimitConfig()
 
     // 1. Plan check
     if (effectivePlan !== 'subscriber' && effectivePlan !== 'subscriber_discounted') {
@@ -112,7 +274,7 @@ export async function chatRoutes(app) {
       return reply.code(429).send({ error: 'rate_limited', scope: 'day_tokens', retry_after: secondsUntilMidnight() })
     }
 
-    // 6. Task tracking (only when X-Task-Id is present)
+    // 6. Task tracking
     if (taskId) {
       const task = await getTask(taskId)
       if (!task || task.ptHash !== identity) {
@@ -128,15 +290,44 @@ export async function chatRoutes(app) {
       }
     }
 
-    // 7. Build Gemini request
-    const model = getEnv('GEMINI_MODEL') ?? 'gemini-2.0-flash'
+    // 7. Build Gemini request body
+    const model = getEnv('GEMINI_MODEL') ?? 'gemini-2.5-flash'
     const { contents, systemInstruction } = toGeminiContents(body.messages)
+    const toolsPayload = toGeminiTools(body.tools, body.tool_choice)
+
     const geminiBody = {
       contents,
       ...(systemInstruction && { systemInstruction }),
+      ...toolsPayload,
       generationConfig: { maxOutputTokens: body.max_tokens ?? 4096 }
     }
 
+    const chatId = `chatcmpl-${randomBytes(6).toString('hex')}`
+
+    // ── Non-streaming: single JSON response ──────────────────────────────────
+    if (!isStream) {
+      const upstream = await fetch(
+        `${GEMINI_BASE}/${model}:generateContent?key=${getEnv('GEMINI_API_KEY')}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(geminiBody)
+        }
+      )
+
+      if (!upstream.ok) {
+        const err = await upstream.json().catch(() => ({}))
+        return reply.code(upstream.status).send({ error: err?.error?.message ?? 'Gemini error' })
+      }
+
+      const geminiRes = await upstream.json()
+      const totalTokens = geminiRes?.usageMetadata?.totalTokenCount ?? 0
+      addDailyTokens(identity, totalTokens).catch(() => {})
+
+      return reply.send(geminiToOpenAI(chatId, geminiRes))
+    }
+
+    // ── Streaming: translate Gemini SSE → OpenAI SSE ─────────────────────────
     const upstream = await fetch(
       `${GEMINI_BASE}/${model}:streamGenerateContent?key=${getEnv('GEMINI_API_KEY')}&alt=sse`,
       {
@@ -151,30 +342,6 @@ export async function chatRoutes(app) {
       return reply.code(upstream.status).send({ error: err?.error?.message ?? 'Gemini error' })
     }
 
-    const chatId = `chatcmpl-${randomBytes(6).toString('hex')}`
-
-    // Non-streaming: collect and re-emit as a single OpenAI response
-    if (!isStream) {
-      const text = await upstream.text()
-      const lines = text.split('\n').filter(l => l.startsWith('data: ') && l.trim() !== 'data: [DONE]')
-      let fullText = '', totalTokens = 0
-      for (const line of lines) {
-        try {
-          const d = JSON.parse(line.slice(6))
-          fullText    += d?.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-          totalTokens  = d?.usageMetadata?.totalTokenCount ?? totalTokens
-        } catch {}
-      }
-      addDailyTokens(identity, totalTokens).catch(() => {})
-      return reply.send({
-        id: chatId,
-        object: 'chat.completion',
-        choices: [{ index: 0, message: { role: 'assistant', content: fullText }, finish_reason: 'stop' }],
-        usage: { total_tokens: totalTokens }
-      })
-    }
-
-    // Streaming: translate Gemini SSE → OpenAI SSE on the fly
     reply.hijack()
     const raw = reply.raw
     raw.writeHead(200, {
