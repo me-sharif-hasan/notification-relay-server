@@ -96,7 +96,12 @@ export async function chatRoutes(app) {
       try {
         res = await provider.chat(body)
       } catch (err) {
-        return reply.code(err.status ?? 502).send({ error: err.message })
+        // Never forward provider 401/403 — those are upstream auth errors, not
+        // client auth errors. The client would misinterpret them as a bad JWT
+        // and loop endlessly refreshing its token.
+        const status = (err.status === 401 || err.status === 403) ? 502 : (err.status ?? 502)
+        request.log.error({ providerStatus: err.status, providerError: err.message }, 'upstream provider error')
+        return reply.code(status).send({ error: 'upstream_error', detail: err.message })
       }
       addDailyTokens(identity, res.usage?.total_tokens ?? 0).catch(() => {})
       return reply.send(res)
@@ -108,7 +113,9 @@ export async function chatRoutes(app) {
     try {
       gen = await provider.stream(body)
     } catch (err) {
-      return reply.code(err.status ?? 502).send({ error: err.message })
+      const status = (err.status === 401 || err.status === 403) ? 502 : (err.status ?? 502)
+      request.log.error({ providerStatus: err.status, providerError: err.message }, 'upstream provider error')
+      return reply.code(status).send({ error: 'upstream_error', detail: err.message })
     }
 
     reply.hijack()
