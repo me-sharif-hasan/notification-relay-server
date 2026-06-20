@@ -109,14 +109,18 @@ export async function adminRoutes(app) {
       return reply.code(401).send({ error: 'Unauthorized' })
     }
 
-    const { skipDebugPackages } = request.body ?? {}
-    if (typeof skipDebugPackages !== 'boolean') {
-      return reply.code(400).send({ error: 'skipDebugPackages must be a boolean' })
+    const { skipDebugPackages, provider } = request.body ?? {}
+    const patch = {}
+    if (typeof skipDebugPackages === 'boolean') patch.skipDebugPackages = skipDebugPackages
+    if (provider === 'gemini' || provider === 'deepseek') patch.provider = provider
+
+    if (!Object.keys(patch).length) {
+      return reply.code(400).send({ error: 'no valid fields provided' })
     }
 
-    await updateSettings({ skipDebugPackages })
-    app.log.info({ action: 'settings_updated', skipDebugPackages })
-    return { success: true, settings: { skipDebugPackages } }
+    await updateSettings(patch)
+    app.log.info({ action: 'settings_updated', ...patch })
+    return { success: true, settings: patch }
   })
 
   // POST /admin/reset-quota — reset daily and/or monthly counters for a subscriber

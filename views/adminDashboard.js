@@ -79,10 +79,11 @@ function subscriberRows(subscribers, limits, perMinute) {
 }
 
 export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken) {
-  const active   = tokens.filter(t => !t.revokedAt)
-  const revoked  = tokens.filter(t => t.revokedAt)
+  const active    = tokens.filter(t => !t.revokedAt)
+  const revoked   = tokens.filter(t => t.revokedAt)
   const skipDebug = !!settings.skipDebugPackages
-  const blocked  = subscribers.filter(s => s.blocklisted)
+  const provider  = settings.provider ?? 'gemini'
+  const blocked   = subscribers.filter(s => s.blocklisted)
 
   const tokenRows = tokens.map(t => {
     const isActive = !t.revokedAt
@@ -175,6 +176,9 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
     .bar-crit { background: #ef4444; }
     .progress-label { font-size: 0.72rem; color: #64748b; font-variant-numeric: tabular-nums; }
     #toast { position: fixed; bottom: 24px; right: 24px; background: #166534; color: #bbf7d0; padding: 12px 20px; border-radius: 8px; font-size: 0.875rem; display: none; z-index: 100; }
+    .provider-select { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 6px 12px; font-size: 0.875rem; cursor: pointer; }
+    .provider-select:focus { outline: none; border-color: #38bdf8; }
+    .provider-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; background: #0c2a4a; color: #38bdf8; margin-left: 8px; }
   </style>
 </head>
 <body>
@@ -214,6 +218,17 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
           <span class="slider"></span>
         </label>
       </div>
+    </div>
+
+    <div class="settings-bar" style="margin-top:12px">
+      <div>
+        <div class="setting-label">LLM Provider <span class="provider-badge">${provider}</span></div>
+        <div class="setting-desc">Backend model provider for all <code>/v1/chat/completions</code> requests. Takes effect immediately — no restart needed.</div>
+      </div>
+      <select class="provider-select" id="provider-select" onchange="setProvider(this.value)">
+        <option value="gemini"   ${provider === 'gemini'   ? 'selected' : ''}>Gemini</option>
+        <option value="deepseek" ${provider === 'deepseek' ? 'selected' : ''}>DeepSeek</option>
+      </select>
     </div>
 
     <div class="section-title">Subscribers — rate limit usage (today / this month)</div>
@@ -292,6 +307,21 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
         setTimeout(() => location.reload(), 1000)
       } else {
         alert('Failed to ' + label + ' subscriber.')
+      }
+    }
+
+    async function setProvider(value) {
+      const res = await fetch('/admin/settings?token=' + ADMIN_TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: value })
+      })
+      if (res.ok) {
+        showToast('Provider switched to ' + value)
+        document.querySelector('.provider-badge').textContent = value
+      } else {
+        alert('Failed to switch provider.')
+        location.reload()
       }
     }
 
