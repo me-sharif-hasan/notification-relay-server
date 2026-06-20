@@ -2,6 +2,7 @@ import { admin, db } from '../firebase.js'
 import { getSettings, updateSettings } from '../services/settings.js'
 import { adminHTML } from '../views/adminDashboard.js'
 import { getEnv, rateLimitConfig } from '../config.js'
+import { getPerMinuteSnapshot } from '../services/rateLimitMemory.js'
 
 const TOKENS    = 'integrationTokens'
 const BLOCKLIST = 'blocklist'
@@ -98,7 +99,8 @@ export async function adminRoutes(app) {
       }
     })
 
-    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), getEnv('ADMIN_TOKEN')))
+    const perMinute = getPerMinuteSnapshot()
+    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN')))
   })
 
   // POST /admin/settings — update server settings

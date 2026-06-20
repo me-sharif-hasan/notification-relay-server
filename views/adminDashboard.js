@@ -20,7 +20,21 @@ function progressBar(value, limit, { warn = 70, crit = 90 } = {}) {
     </div>`
 }
 
-function subscriberRows(subscribers, limits) {
+function perMinuteCell(ptHash, perMinute, limit) {
+  const entry = perMinute[ptHash]
+  if (!entry) return '<span class="muted">— / ' + limit + '</span>'
+  const p = Math.min(100, Math.round((entry.count / limit) * 100))
+  const cls = p >= 90 ? 'bar-crit' : p >= 70 ? 'bar-warn' : 'bar-ok'
+  return `
+    <div class="progress-wrap">
+      <div class="progress-bar">
+        <div class="progress-fill ${cls}" style="width:${p}%"></div>
+      </div>
+      <span class="progress-label">${entry.count} / ${limit} <span class="muted">(resets in ${entry.resetsIn}s)</span></span>
+    </div>`
+}
+
+function subscriberRows(subscribers, limits, perMinute) {
   if (!subscribers.length) return '<div class="empty">No subscriber activity today.</div>'
 
   const rows = subscribers.map(u => {
@@ -34,6 +48,7 @@ function subscriberRows(subscribers, limits) {
     return `
       <tr class="${u.blocklisted ? 'row-revoked' : ''}">
         <td class="hash" title="${u.ptHash}">${u.ptHash.slice(0, 12)}…</td>
+        <td>${perMinuteCell(u.ptHash, perMinute, limits.requestsPerMin)}</td>
         <td>${progressBar(u.dailyRequests, limits.requestsPerDay)}</td>
         <td>${progressBar(u.dailyTokens, limits.tokensPerDay)}</td>
         <td>${progressBar(u.monthlyTasks, limits.tasksPerMonth)}</td>
@@ -51,6 +66,7 @@ function subscriberRows(subscribers, limits) {
     <thead>
       <tr>
         <th>Subscriber</th>
+        <th>Req / min</th>
         <th>Requests today</th>
         <th>Tokens today</th>
         <th>Tasks this month</th>
@@ -62,7 +78,7 @@ function subscriberRows(subscribers, limits) {
   </table>`
 }
 
-export function adminHTML(tokens, settings, subscribers, limits, adminToken) {
+export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken) {
   const active   = tokens.filter(t => !t.revokedAt)
   const revoked  = tokens.filter(t => t.revokedAt)
   const skipDebug = !!settings.skipDebugPackages
@@ -202,7 +218,7 @@ export function adminHTML(tokens, settings, subscribers, limits, adminToken) {
 
     <div class="section-title">Subscribers — rate limit usage (today / this month)</div>
     <div class="table-wrap">
-      ${subscriberRows(subscribers, limits)}
+      ${subscriberRows(subscribers, limits, perMinute)}
     </div>
 
     <div class="section-title">Integration Tokens — sorted by created date</div>
