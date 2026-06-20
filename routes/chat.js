@@ -259,18 +259,21 @@ export async function chatRoutes(app) {
     // 3. Per-minute burst (in-memory)
     const burst = checkRateLimit(identity, limits.requestsPerMin)
     if (burst.limited) {
+      request.log.warn({ identity, scope: 'minute', retryAfter: burst.retryAfter }, 'rate limit hit')
       return reply.code(429).send({ error: 'rate_limited', scope: 'minute', retry_after: burst.retryAfter })
     }
 
     // 4. Daily request limit
     const dayReqs = await incrementDailyRequests(identity)
     if (dayReqs > limits.requestsPerDay) {
+      request.log.warn({ identity, scope: 'day_requests', dayReqs, limit: limits.requestsPerDay }, 'rate limit hit')
       return reply.code(429).send({ error: 'rate_limited', scope: 'day_requests', retry_after: secondsUntilMidnight() })
     }
 
     // 5. Daily token budget — check before calling Gemini
     const usedTokens = await getDailyTokens(identity)
     if (usedTokens >= limits.tokensPerDay) {
+      request.log.warn({ identity, scope: 'day_tokens', usedTokens, limit: limits.tokensPerDay }, 'rate limit hit')
       return reply.code(429).send({ error: 'rate_limited', scope: 'day_tokens', retry_after: secondsUntilMidnight() })
     }
 
@@ -285,6 +288,7 @@ export async function chatRoutes(app) {
         const newCount = await incrementMonthlyTasks(identity)
         if (newCount > limits.tasksPerMonth) {
           await decrementMonthlyTasks(identity)
+          request.log.warn({ identity, scope: 'monthly_tasks', newCount, limit: limits.tasksPerMonth }, 'rate limit hit')
           return reply.code(429).send({ error: 'task_limit_reached' })
         }
       }
