@@ -14,7 +14,7 @@ export const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/mod
 
 export function rateLimitConfig() {
   return {
-    requestsPerMin:  Number(getEnv('RATE_LIMIT_REQUESTS_PER_MIN')  ?? 5),
+    requestsPerMin:  Number(getEnv('RATE_LIMIT_REQUESTS_PER_MIN')  ?? 70),
     requestsPerDay:  Number(getEnv('RATE_LIMIT_REQUESTS_PER_DAY')  ?? 50),
     tokensPerDay:    Number(getEnv('RATE_LIMIT_TOKENS_PER_DAY')    ?? 1_000_000),
     tasksPerMonth:   Number(getEnv('RATE_LIMIT_TASKS_PER_MONTH')   ?? 50),
