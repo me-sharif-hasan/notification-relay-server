@@ -13,6 +13,13 @@ export async function verifyIntegrityToken(integrityToken, packageName) {
   const client = await _googleAuth.getClient()
   const { token } = await client.getAccessToken()
 
+  // Log service account identity and full token for debugging
+  console.info('[integrity] request', {
+    packageName,
+    serviceAccount: client.email ?? client.credentials?.client_email ?? 'unknown',
+    integrityToken,  // full token — remove after debugging
+  })
+
   const res = await fetch(
     `https://playintegrity.googleapis.com/v1/${packageName}:decodeIntegrityToken`,
     {
@@ -30,10 +37,9 @@ export async function verifyIntegrityToken(integrityToken, packageName) {
     console.error('[integrity] API error', {
       status: res.status,
       packageName,
-      integrityTokenLength: integrityToken?.length,
       errorCode: body?.error?.code,
       errorMessage: body?.error?.message,
-      errorDetails: body?.error?.details
+      errorDetails: JSON.stringify(body?.error?.details)
     })
     throw new Error(body?.error?.message ?? `Play Integrity API error ${res.status}`)
   }
