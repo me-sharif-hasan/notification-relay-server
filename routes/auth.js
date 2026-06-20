@@ -37,12 +37,13 @@ export async function authRoutes(app) {
 
     app.log.info({
       action: 'auth_request',
-      packageName,
-      deviceId,
-      hasIntegrityToken: !!integrityToken,
-      integrityTokenLength: integrityToken?.length,
-      hasIapPurchaseToken: !!iapPurchaseToken,
-      hasSubscriptionPurchaseToken: !!subscriptionPurchaseToken
+      body: {
+        packageName,
+        deviceId,
+        integrityToken: integrityToken ? `${integrityToken.slice(0, 40)}… (${integrityToken.length} chars)` : null,
+        iapPurchaseToken: iapPurchaseToken ? `${iapPurchaseToken.slice(0, 20)}… (${iapPurchaseToken.length} chars)` : null,
+        subscriptionPurchaseToken: subscriptionPurchaseToken ? `${subscriptionPurchaseToken.slice(0, 20)}… (${subscriptionPurchaseToken.length} chars)` : null,
+      }
     })
 
     if (!integrityToken || !packageName) {
