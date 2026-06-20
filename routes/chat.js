@@ -12,7 +12,7 @@ import { isBlocklisted } from '../services/blocklist.js'
 import { getTask, claimFirstLlmCall } from '../services/agentTasks.js'
 import { rateLimitConfig } from '../config.js'
 import { getSettings } from '../services/settings.js'
-import { getProvider, getProviderForModel } from '../providers/index.js'
+import { getProvider, getProviderForModel, ALLOWED_MODELS } from '../providers/index.js'
 
 export async function chatRoutes(app) {
   // GET /ping — verify active provider reachability
@@ -37,6 +37,15 @@ export async function chatRoutes(app) {
     const isStream      = body?.stream === true
     const taskId        = request.headers['x-task-id']
     const limits        = rateLimitConfig()
+
+    // 0. Model allowlist check (only when client explicitly sends a model)
+    if (body.model != null && !ALLOWED_MODELS.has(body.model)) {
+      return reply.code(400).send({
+        error: 'unsupported_model',
+        model: body.model,
+        allowed: [...ALLOWED_MODELS]
+      })
+    }
 
     // 1. Plan check
     if (effectivePlan !== 'subscriber' && effectivePlan !== 'subscriber_discounted') {
