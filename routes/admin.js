@@ -117,6 +117,32 @@ export async function adminRoutes(app) {
     return { success: true, settings: { skipDebugPackages } }
   })
 
+  // POST /admin/reset-quota — reset daily and/or monthly counters for a subscriber
+  app.post('/admin/reset-quota', async (request, reply) => {
+    if (!isAuthorized(request)) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+
+    const { ptHash, scope } = request.body ?? {}
+    if (!ptHash) return reply.code(400).send({ error: 'ptHash required' })
+
+    const today = todayStr()
+    const month = monthStr()
+    const batch = db.batch()
+
+    if (!scope || scope === 'daily' || scope === 'all') {
+      batch.delete(db.collection('rateLimits').doc(`${ptHash}_req_${today}`))
+      batch.delete(db.collection('rateLimits').doc(`${ptHash}_tok_${today}`))
+    }
+    if (!scope || scope === 'monthly' || scope === 'all') {
+      batch.delete(db.collection('rateLimits').doc(`${ptHash}_tasks_${month}`))
+    }
+
+    await batch.commit()
+    app.log.info({ ptHash, scope: scope ?? 'all', action: 'quota_reset' }, 'quota reset via admin')
+    return { success: true }
+  })
+
   // POST /admin/blocklist — block or unblock a subscriber
   app.post('/admin/blocklist', async (request, reply) => {
     if (!isAuthorized(request)) {

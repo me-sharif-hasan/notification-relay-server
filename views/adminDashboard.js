@@ -38,7 +38,12 @@ function subscriberRows(subscribers, limits) {
         <td>${progressBar(u.dailyTokens, limits.tokensPerDay)}</td>
         <td>${progressBar(u.monthlyTasks, limits.tasksPerMonth)}</td>
         <td>${statusBadge}</td>
-        <td>${blockBtn}</td>
+        <td class="action-cell">
+          <button class="btn-reset" onclick="resetQuota('${u.ptHash}', 'daily')" title="Reset today's requests and tokens">Day</button>
+          <button class="btn-reset" onclick="resetQuota('${u.ptHash}', 'monthly')" title="Reset this month's tasks">Mo</button>
+          <button class="btn-reset btn-reset-all" onclick="resetQuota('${u.ptHash}', 'all')" title="Reset all quotas">All</button>
+          ${blockBtn}
+        </td>
       </tr>`
   }).join('')
 
@@ -50,7 +55,7 @@ function subscriberRows(subscribers, limits) {
         <th>Tokens today</th>
         <th>Tasks this month</th>
         <th>Status</th>
-        <th>Action</th>
+        <th>Reset / Action</th>
       </tr>
     </thead>
     <tbody>${rows}</tbody>
@@ -136,6 +141,11 @@ export function adminHTML(tokens, settings, subscribers, limits, adminToken) {
     .btn-revoke:hover { background: #991b1b; }
     .btn-unblock { background: #14532d; color: #86efac; border: none; border-radius: 6px; padding: 5px 12px; font-size: 0.8rem; cursor: pointer; transition: background 0.15s; }
     .btn-unblock:hover { background: #166534; }
+    .action-cell { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .btn-reset { background: #1e3a5f; color: #7dd3fc; border: none; border-radius: 6px; padding: 5px 10px; font-size: 0.75rem; cursor: pointer; transition: background 0.15s; }
+    .btn-reset:hover { background: #1e4976; }
+    .btn-reset-all { background: #312e81; color: #a5b4fc; }
+    .btn-reset-all:hover { background: #3730a3; }
     .hits { text-align: right; width: 80px; }
     .hit-count { font-variant-numeric: tabular-nums; font-weight: 600; color: #38bdf8; }
     .muted { color: #475569; }
@@ -234,6 +244,22 @@ export function adminHTML(tokens, settings, subscribers, limits, adminToken) {
         setTimeout(() => location.reload(), 1000)
       } else {
         alert('Failed to revoke token.')
+      }
+    }
+
+    async function resetQuota(ptHash, scope) {
+      const labels = { daily: "today's requests and tokens", monthly: "this month's tasks", all: "all quotas" }
+      if (!confirm('Reset ' + labels[scope] + ' for this subscriber?')) return
+      const res = await fetch('/admin/reset-quota?token=' + ADMIN_TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ptHash, scope })
+      })
+      if (res.ok) {
+        showToast('Quota reset: ' + labels[scope])
+        setTimeout(() => location.reload(), 800)
+      } else {
+        alert('Failed to reset quota.')
       }
     }
 
