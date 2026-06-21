@@ -52,14 +52,67 @@ export async function authRoutes(app) {
 
     const settings = await getSettings()
 
-    // Debug bypass — grants subscriber plan so all features can be tested
+    // Debug bypass — skips Play Integrity check only (integrity tokens require release signing).
+    // Subscription purchase tokens are real Google Play tokens that work in debug builds,
+    // so subscription validity is still verified normally.
     if (packageName.endsWith('.debug') && settings.skipDebugPackages) {
-      const sub = subscriptionPurchaseToken ? ptHash(subscriptionPurchaseToken)
+      let subValid = false, iapValid = false, expiryTime = null
+
+      if (subscriptionPurchaseToken) {
+        try {
+          const result = await verifySubscription(subscriptionPurchaseToken)
+          subValid   = result.valid
+          expiryTime = result.expiryTime
+          app.log.info({
+            action: 'subscription_verified',
+            tokenPrefix: subscriptionPurchaseToken.slice(0, 20),
+            valid: result.valid,
+            subscriptionState: result.subscriptionState,
+            expiryTime: result.expiryTime
+          }, 'Google Play subscription check')
+        } catch (err) {
+          app.log.warn({
+            action: 'subscription_verify_failed',
+            tokenPrefix: subscriptionPurchaseToken.slice(0, 20),
+            err: err.message
+          }, 'subscription verification failed — treating as invalid')
+        }
+      }
+
+      if (iapPurchaseToken) {
+        try {
+          const result = await verifyIAP(iapPurchaseToken)
+          iapValid = result.valid
+          app.log.info({
+            action: 'iap_verified',
+            tokenPrefix: iapPurchaseToken.slice(0, 20),
+            valid: result.valid,
+            purchaseState: result.purchaseState
+          }, 'Google Play IAP check')
+        } catch (err) {
+          app.log.warn({
+            action: 'iap_verify_failed',
+            tokenPrefix: iapPurchaseToken.slice(0, 20),
+            err: err.message
+          }, 'IAP verification failed — treating as invalid')
+        }
+      }
+
+      const plan       = derivePlan(subValid, iapValid)
+      const offerToken = deriveOfferToken(plan)
+      const sub        = subscriptionPurchaseToken ? ptHash(subscriptionPurchaseToken)
         : iapPurchaseToken ? ptHash(iapPurchaseToken)
         : (deviceId ?? 'debug')
-      const token = signJwt({ sub, plan: 'subscriber', appRecognition: 'DEBUG_BYPASS' }, getEnv('JWT_SECRET'))
-      app.log.info({ packageName, sub, action: 'jwt_issued_debug_bypass' })
-      return { success: true, token, expiresIn: 900, plan: 'subscriber', offerToken: null }
+
+      app.log.info({
+        action: 'jwt_issued_debug_bypass',
+        packageName, sub, plan, subValid, iapValid, expiryTime,
+        hasSubscriptionToken: !!subscriptionPurchaseToken,
+        hasIapToken: !!iapPurchaseToken
+      }, 'issuing JWT via debug bypass (integrity skipped, subscription verified)')
+
+      const token = signJwt({ sub, plan, appRecognition: 'DEBUG_BYPASS', expiryTime }, getEnv('JWT_SECRET'))
+      return { success: true, token, expiresIn: 900, plan, offerToken }
     }
 
     // Legacy clients only send deviceId — require it if no purchase tokens
