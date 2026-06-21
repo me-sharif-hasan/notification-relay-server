@@ -30,13 +30,25 @@ export async function chatRoutes(app) {
 
   // POST /v1/chat/completions — LLM relay with full subscription guard
   app.post('/v1/chat/completions', { preHandler: requireJwt }, async (request, reply) => {
-    const { sub, plan, deviceId, isPremium } = request.jwtPayload
+    const { sub, plan, deviceId, isPremium, expiryTime, appRecognition } = request.jwtPayload
     const identity      = sub ?? deviceId
     const effectivePlan = plan ?? (isPremium ? 'subscriber' : 'free')
     const body          = request.body
     const isStream      = body?.stream === true
     const taskId        = request.headers['x-task-id']
     const limits        = rateLimitConfig()
+
+    request.log.info({
+      action: 'chat_request',
+      identity,
+      plan: effectivePlan,
+      expiryTime,
+      appRecognition,
+      model: body?.model ?? null,
+      stream: isStream,
+      taskId: taskId ?? null,
+      messageCount: body?.messages?.length ?? 0
+    }, 'incoming chat request')
 
     // 0. Model allowlist check (only when client explicitly sends a model)
     if (body.model != null && !ALLOWED_MODELS.has(body.model)) {
@@ -49,11 +61,19 @@ export async function chatRoutes(app) {
 
     // 1. Plan check
     if (effectivePlan !== 'subscriber' && effectivePlan !== 'subscriber_discounted') {
+      request.log.warn({
+        action: 'plan_rejected',
+        identity,
+        plan: effectivePlan,
+        expiryTime,
+        appRecognition
+      }, 'chat request denied — not a subscriber')
       return reply.code(403).send({ error: 'subscription_required', plan: effectivePlan })
     }
 
     // 2. Blocklist check
     if (await isBlocklisted(identity)) {
+      request.log.warn({ action: 'blocklist_rejected', identity }, 'chat request denied — identity is blocklisted')
       return reply.code(403).send({ error: 'subscription_revoked' })
     }
 
@@ -102,6 +122,15 @@ export async function chatRoutes(app) {
     const modelRouted   = getProviderForModel(body.model)
     const provider      = modelRouted ? modelRouted.provider : getProvider(settings.provider ?? 'gemini')
     const providerOpts  = modelRouted ? { model: modelRouted.model } : {}
+
+    request.log.info({
+      action: 'provider_dispatch',
+      identity,
+      plan: effectivePlan,
+      providerName: modelRouted ? (body.model.startsWith('gemini') ? 'gemini' : 'deepseek') : (settings.provider ?? 'gemini'),
+      model: providerOpts.model ?? null,
+      stream: isStream
+    }, 'dispatching to provider')
 
     // ── Non-streaming ────────────────────────────────────────────────────────
     if (!isStream) {

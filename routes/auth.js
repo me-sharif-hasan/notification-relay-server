@@ -91,10 +91,21 @@ export async function authRoutes(app) {
       if (subscriptionPurchaseToken) {
         try {
           const result = await verifySubscription(subscriptionPurchaseToken)
-          subValid = result.valid
+          subValid   = result.valid
           expiryTime = result.expiryTime
+          app.log.info({
+            action: 'subscription_verified',
+            tokenPrefix: subscriptionPurchaseToken.slice(0, 20),
+            valid: result.valid,
+            subscriptionState: result.subscriptionState,
+            expiryTime: result.expiryTime
+          }, 'Google Play subscription check')
         } catch (err) {
-          app.log.warn({ err: err.message }, 'subscription verification failed — treating as invalid')
+          app.log.warn({
+            action: 'subscription_verify_failed',
+            tokenPrefix: subscriptionPurchaseToken.slice(0, 20),
+            err: err.message
+          }, 'subscription verification failed — treating as invalid')
         }
       }
 
@@ -102,8 +113,18 @@ export async function authRoutes(app) {
         try {
           const result = await verifyIAP(iapPurchaseToken)
           iapValid = result.valid
+          app.log.info({
+            action: 'iap_verified',
+            tokenPrefix: iapPurchaseToken.slice(0, 20),
+            valid: result.valid,
+            purchaseState: result.purchaseState
+          }, 'Google Play IAP check')
         } catch (err) {
-          app.log.warn({ err: err.message }, 'IAP verification failed — treating as invalid')
+          app.log.warn({
+            action: 'iap_verify_failed',
+            tokenPrefix: iapPurchaseToken.slice(0, 20),
+            err: err.message
+          }, 'IAP verification failed — treating as invalid')
         }
       }
 
@@ -111,8 +132,19 @@ export async function authRoutes(app) {
       const offerToken = deriveOfferToken(plan)
       const sub        = subscriptionPurchaseToken ? ptHash(subscriptionPurchaseToken) : ptHash(iapPurchaseToken)
 
+      app.log.info({
+        action: 'jwt_issued',
+        sub,
+        plan,
+        subValid,
+        iapValid,
+        expiryTime,
+        appRecognition: check.appRecognition,
+        hasSubscriptionToken: !!subscriptionPurchaseToken,
+        hasIapToken: !!iapPurchaseToken
+      }, 'issuing JWT with derived plan')
+
       const token = signJwt({ sub, plan, appRecognition: check.appRecognition, expiryTime }, getEnv('JWT_SECRET'))
-      app.log.info({ sub, plan, appRecognition: check.appRecognition, action: 'jwt_issued' })
       return { success: true, token, expiresIn: 900, plan, offerToken }
     }
 
