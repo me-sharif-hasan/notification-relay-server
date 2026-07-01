@@ -78,12 +78,52 @@ function subscriberRows(subscribers, limits, perMinute) {
   </table>`
 }
 
-export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken) {
-  const active    = tokens.filter(t => !t.revokedAt)
-  const revoked   = tokens.filter(t => t.revokedAt)
-  const skipDebug = !!settings.skipDebugPackages
-  const provider  = settings.provider ?? 'gemini'
-  const blocked   = subscribers.filter(s => s.blocklisted)
+function trialRows(trialUsers, promptsMax, windowDays, adminToken) {
+  if (!trialUsers.length) return '<div class="empty">No free trial usage yet.</div>'
+  const rows = trialUsers
+    .sort((a, b) => b.promptsUsed - a.promptsUsed)
+    .map(u => {
+      const pct    = Math.min(100, Math.round((u.promptsUsed / promptsMax) * 100))
+      const cls    = pct >= 90 ? 'bar-crit' : pct >= 66 ? 'bar-warn' : 'bar-ok'
+      const resets = u.windowStart
+        ? new Date(new Date(u.windowStart).getTime() + windowDays * 86400_000).toLocaleDateString()
+        : '—'
+      return `
+        <tr>
+          <td class="hash" title="${u.identity}">${u.identity.slice(0, 12)}…</td>
+          <td>
+            <div class="progress-wrap">
+              <div class="progress-bar"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div>
+              <span class="progress-label">${u.promptsUsed} / ${promptsMax}</span>
+            </div>
+          </td>
+          <td>${resets}</td>
+          <td class="action-cell">
+            <button class="btn-reset" onclick="resetTrial('${u.identity}')">Reset</button>
+          </td>
+        </tr>`
+    }).join('')
+  return `<table>
+    <thead>
+      <tr>
+        <th>Identity</th>
+        <th>Prompts used</th>
+        <th>Window resets</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`
+}
+
+export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken, trialUsers = [], envTrialCfg = {}) {
+  const active         = tokens.filter(t => !t.revokedAt)
+  const revoked        = tokens.filter(t => t.revokedAt)
+  const skipDebug      = !!settings.skipDebugPackages
+  const provider       = settings.provider ?? 'gemini'
+  const blocked        = subscribers.filter(s => s.blocklisted)
+  const trialMax       = settings.trialPromptsMax  ?? envTrialCfg.promptsMax ?? 15
+  const trialWindow    = settings.trialWindowDays  ?? envTrialCfg.windowDays ?? 7
 
   const tokenRows = tokens.map(t => {
     const isActive = !t.revokedAt
@@ -231,6 +271,33 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
       </select>
     </div>
 
+    <div class="settings-bar" style="margin-top:12px">
+      <div>
+        <div class="setting-label">Free Trial — Prompts per window</div>
+        <div class="setting-desc">Number of prompts a free user gets per window. Changes take effect on next request.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <input type="number" id="trial-prompts-input" class="provider-select" value="${trialMax}" min="1" max="9999" style="width:80px">
+        <button class="btn-reset" onclick="saveTrialConfig()">Save</button>
+      </div>
+    </div>
+
+    <div class="settings-bar" style="margin-top:12px">
+      <div>
+        <div class="setting-label">Free Trial — Window length (days)</div>
+        <div class="setting-desc">Days before the trial prompt counter resets for a free user.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <input type="number" id="trial-window-input" class="provider-select" value="${trialWindow}" min="1" max="365" style="width:80px">
+        <button class="btn-reset" onclick="saveTrialWindowConfig()">Save</button>
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-top:32px">Free Trial Users</div>
+    <div class="table-wrap">
+      ${trialRows(trialUsers, trialMax, trialWindow, adminToken)}
+    </div>
+
     <div class="section-title">Subscribers — rate limit usage (today / this month)</div>
     <div class="table-wrap">
       ${subscriberRows(subscribers, limits, perMinute)}
@@ -339,6 +406,41 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
         document.getElementById('skip-debug-toggle').checked = !enabled
         document.getElementById('toggle-status').textContent = !enabled ? 'ON' : 'OFF'
       }
+    }
+
+    async function saveTrialConfig() {
+      const val = parseInt(document.getElementById('trial-prompts-input').value, 10)
+      if (!val || val < 1) return alert('Enter a valid number.')
+      const res = await fetch('/admin/settings?token=' + ADMIN_TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trialPromptsMax: val })
+      })
+      if (res.ok) showToast('Trial prompts max updated to ' + val)
+      else alert('Failed to save.')
+    }
+
+    async function saveTrialWindowConfig() {
+      const val = parseInt(document.getElementById('trial-window-input').value, 10)
+      if (!val || val < 1) return alert('Enter a valid number.')
+      const res = await fetch('/admin/settings?token=' + ADMIN_TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trialWindowDays: val })
+      })
+      if (res.ok) showToast('Trial window updated to ' + val + ' days')
+      else alert('Failed to save.')
+    }
+
+    async function resetTrial(identity) {
+      if (!confirm('Reset trial for ' + identity.slice(0, 12) + '…? They will start fresh.')) return
+      const res = await fetch('/admin/reset-trial?token=' + ADMIN_TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identity })
+      })
+      if (res.ok) { showToast('Trial reset.'); setTimeout(() => location.reload(), 800) }
+      else alert('Failed to reset trial.')
     }
 
     function showToast(msg) {

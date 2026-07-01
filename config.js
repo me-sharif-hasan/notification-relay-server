@@ -20,3 +20,10 @@ export function rateLimitConfig() {
     tasksPerMonth:   Number(getEnv('RATE_LIMIT_TASKS_PER_MONTH')   ?? 100),
   }
 }
+
+export function trialConfig() {
+  return {
+    promptsMax: Number(getEnv('FREE_TRIAL_PROMPTS_MAX') ?? 15),
+    windowDays: Number(getEnv('FREE_TRIAL_WINDOW_DAYS') ?? 7),
+  }
+}

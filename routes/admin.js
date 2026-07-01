@@ -1,8 +1,9 @@
 import { admin, db } from '../firebase.js'
 import { getSettings, updateSettings } from '../services/settings.js'
 import { adminHTML } from '../views/adminDashboard.js'
-import { getEnv, rateLimitConfig } from '../config.js'
+import { getEnv, rateLimitConfig, trialConfig } from '../config.js'
 import { getPerMinuteSnapshot } from '../services/rateLimitMemory.js'
+import { resetTrial, getAllTrialUsers } from '../services/trialUsage.js'
 
 const TOKENS    = 'integrationTokens'
 const BLOCKLIST = 'blocklist'
@@ -80,10 +81,11 @@ export async function adminRoutes(app) {
       return reply.code(401).type('text/plain').send('Unauthorized')
     }
 
-    const [snapshot, settings, subscribers] = await Promise.all([
+    const [snapshot, settings, subscribers, trialUsers] = await Promise.all([
       db.collection(TOKENS).orderBy('createdAt', 'desc').get(),
       getSettings(),
-      getSubscriberUsage()
+      getSubscriberUsage(),
+      getAllTrialUsers(),
     ])
 
     const tokens = snapshot.docs.map(doc => {
@@ -100,7 +102,7 @@ export async function adminRoutes(app) {
     })
 
     const perMinute = getPerMinuteSnapshot()
-    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN')))
+    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN'), trialUsers, trialConfig()))
   })
 
   // POST /admin/settings — update server settings
@@ -109,10 +111,12 @@ export async function adminRoutes(app) {
       return reply.code(401).send({ error: 'Unauthorized' })
     }
 
-    const { skipDebugPackages, provider } = request.body ?? {}
+    const { skipDebugPackages, provider, trialPromptsMax, trialWindowDays } = request.body ?? {}
     const patch = {}
     if (typeof skipDebugPackages === 'boolean') patch.skipDebugPackages = skipDebugPackages
     if (provider === 'gemini' || provider === 'deepseek') patch.provider = provider
+    if (typeof trialPromptsMax === 'number' && trialPromptsMax > 0) patch.trialPromptsMax = Math.floor(trialPromptsMax)
+    if (typeof trialWindowDays === 'number' && trialWindowDays > 0) patch.trialWindowDays = Math.floor(trialWindowDays)
 
     if (!Object.keys(patch).length) {
       return reply.code(400).send({ error: 'no valid fields provided' })
@@ -146,6 +150,18 @@ export async function adminRoutes(app) {
 
     await batch.commit()
     app.log.info({ ptHash, scope: scope ?? 'all', action: 'quota_reset' }, 'quota reset via admin')
+    return { success: true }
+  })
+
+  // POST /admin/reset-trial — wipe a free user's trial window so they start fresh
+  app.post('/admin/reset-trial', async (request, reply) => {
+    if (!isAuthorized(request)) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+    const { identity } = request.body ?? {}
+    if (!identity) return reply.code(400).send({ error: 'identity required' })
+    await resetTrial(identity)
+    app.log.info({ identity, action: 'trial_reset' }, 'trial reset via admin')
     return { success: true }
   })
 

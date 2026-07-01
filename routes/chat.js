@@ -10,9 +10,10 @@ import {
 } from '../services/rateLimitFirestore.js'
 import { isBlocklisted } from '../services/blocklist.js'
 import { getTask, claimFirstLlmCall } from '../services/agentTasks.js'
-import { rateLimitConfig } from '../config.js'
+import { rateLimitConfig, trialConfig } from '../config.js'
 import { getSettings } from '../services/settings.js'
 import { getProvider, getProviderForModel, ALLOWED_MODELS } from '../providers/index.js'
+import { getTrialStatus, incrementTrialPrompts } from '../services/trialUsage.js'
 
 export async function chatRoutes(app) {
   // GET /ping — verify active provider reachability
@@ -37,6 +38,7 @@ export async function chatRoutes(app) {
     const isStream      = body?.stream === true
     const taskId        = request.headers['x-task-id']
     const limits        = rateLimitConfig()
+    const settings      = await getSettings()
 
     request.log.info({
       action: 'chat_request',
@@ -59,16 +61,44 @@ export async function chatRoutes(app) {
       })
     }
 
-    // 1. Plan check
-    if (effectivePlan !== 'subscriber' && effectivePlan !== 'subscriber_discounted') {
-      request.log.warn({
-        action: 'plan_rejected',
-        identity,
-        plan: effectivePlan,
-        expiryTime,
-        appRecognition
-      }, 'chat request denied — not a subscriber')
-      return reply.code(403).send({ error: 'subscription_required', plan: effectivePlan })
+    // 1. Plan check — subscribers pass through; free users get a limited trial
+    const isSubscriber = effectivePlan === 'subscriber' || effectivePlan === 'subscriber_discounted'
+    let trialMeta = null // set when a free trial slot is reserved
+
+    if (!isSubscriber) {
+      if (appRecognition === 'DEBUG_BYPASS') {
+        // Debug builds bypass trial enforcement entirely
+        request.log.info({ identity, action: 'trial_debug_bypass' }, 'debug build — skipping trial check')
+      } else {
+        const envTrial    = trialConfig()
+        const promptsMax  = settings.trialPromptsMax  ?? envTrial.promptsMax
+        const windowDays  = settings.trialWindowDays  ?? envTrial.windowDays
+        const trialStatus = await getTrialStatus(identity, windowDays)
+
+        if (trialStatus.used >= promptsMax) {
+          request.log.warn({
+            action: 'trial_exhausted',
+            identity,
+            promptsUsed: trialStatus.used,
+            promptsMax,
+          }, 'free trial exhausted')
+          return reply.code(403).send({
+            error: 'trial_exhausted',
+            promptsUsed: trialStatus.used,
+            promptsMax,
+            resetsAt: trialStatus.resetsAt?.toISOString() ?? null,
+          })
+        }
+
+        trialMeta = { identity, windowDays, promptsMax, usedBefore: trialStatus.used }
+        request.log.info({
+          action: 'trial_allowed',
+          identity,
+          promptsUsed: trialStatus.used,
+          promptsMax,
+          windowDays,
+        }, 'free trial request allowed')
+      }
     }
 
     // 2. Blocklist check
@@ -118,7 +148,6 @@ export async function chatRoutes(app) {
     // 7. Dispatch to active provider
     // If the client specifies a model name, use it to select both the provider
     // and the exact model variant. Otherwise fall back to the admin-configured provider.
-    const settings      = await getSettings()
     const modelRouted   = getProviderForModel(body.model)
     const provider      = modelRouted ? modelRouted.provider : getProvider(settings.provider ?? 'gemini')
     const providerOpts  = modelRouted ? { model: modelRouted.model } : {}
@@ -146,6 +175,17 @@ export async function chatRoutes(app) {
         return reply.code(status).send({ error: 'upstream_error', detail: err.message })
       }
       addDailyTokens(identity, res.usage?.total_tokens ?? 0).catch(() => {})
+
+      if (trialMeta) {
+        const updated = await incrementTrialPrompts(trialMeta.identity, trialMeta.windowDays).catch(() => null)
+        if (updated) {
+          reply
+            .header('X-Trial-Prompts-Used', String(updated.used))
+            .header('X-Trial-Prompts-Max',  String(trialMeta.promptsMax))
+            .header('X-Trial-Resets-At',    updated.resetsAt.toISOString())
+        }
+      }
+
       return reply.send(res)
     }
 
@@ -160,13 +200,27 @@ export async function chatRoutes(app) {
       return reply.code(status).send({ error: 'upstream_error', detail: err.message })
     }
 
+    // Increment trial before hijacking so we have the count for headers
+    let trialHeaders = {}
+    if (trialMeta) {
+      const updated = await incrementTrialPrompts(trialMeta.identity, trialMeta.windowDays).catch(() => null)
+      if (updated) {
+        trialHeaders = {
+          'X-Trial-Prompts-Used': String(updated.used),
+          'X-Trial-Prompts-Max':  String(trialMeta.promptsMax),
+          'X-Trial-Resets-At':    updated.resetsAt.toISOString(),
+        }
+      }
+    }
+
     reply.hijack()
     const raw = reply.raw
     raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no'
+      'X-Accel-Buffering': 'no',
+      ...trialHeaders,
     })
 
     let totalTokens = 0
