@@ -66,39 +66,34 @@ export async function chatRoutes(app) {
     let trialMeta = null // set when a free trial slot is reserved
 
     if (!isSubscriber) {
-      if (appRecognition === 'DEBUG_BYPASS') {
-        // Debug builds bypass trial enforcement entirely
-        request.log.info({ identity, action: 'trial_debug_bypass' }, 'debug build — skipping trial check')
-      } else {
-        const envTrial    = trialConfig()
-        const promptsMax  = settings.trialPromptsMax  ?? envTrial.promptsMax
-        const windowDays  = settings.trialWindowDays  ?? envTrial.windowDays
-        const trialStatus = await getTrialStatus(identity, windowDays)
+      const envTrial    = trialConfig()
+      const promptsMax  = settings.trialPromptsMax  ?? envTrial.promptsMax
+      const windowDays  = settings.trialWindowDays  ?? envTrial.windowDays
+      const trialStatus = await getTrialStatus(identity, windowDays)
 
-        if (trialStatus.used >= promptsMax) {
-          request.log.warn({
-            action: 'trial_exhausted',
-            identity,
-            promptsUsed: trialStatus.used,
-            promptsMax,
-          }, 'free trial exhausted')
-          return reply.code(403).send({
-            error: 'trial_exhausted',
-            promptsUsed: trialStatus.used,
-            promptsMax,
-            resetsAt: trialStatus.resetsAt?.toISOString() ?? null,
-          })
-        }
-
-        trialMeta = { identity, windowDays, promptsMax, usedBefore: trialStatus.used }
-        request.log.info({
-          action: 'trial_allowed',
+      if (trialStatus.used >= promptsMax) {
+        request.log.warn({
+          action: 'trial_exhausted',
           identity,
           promptsUsed: trialStatus.used,
           promptsMax,
-          windowDays,
-        }, 'free trial request allowed')
+        }, 'free trial exhausted')
+        return reply.code(403).send({
+          error: 'trial_exhausted',
+          promptsUsed: trialStatus.used,
+          promptsMax,
+          resetsAt: trialStatus.resetsAt?.toISOString() ?? null,
+        })
       }
+
+      trialMeta = { identity, windowDays, promptsMax, usedBefore: trialStatus.used }
+      request.log.info({
+        action: 'trial_allowed',
+        identity,
+        promptsUsed: trialStatus.used,
+        promptsMax,
+        windowDays,
+      }, 'free trial request allowed')
     }
 
     // 2. Blocklist check
