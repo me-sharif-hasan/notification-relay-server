@@ -9,6 +9,7 @@ import { playNotificationRoutes } from './routes/playNotifications.js'
 import { integrationRoutes } from './routes/integrations.js'
 import { alertRoutes } from './routes/alert.js'
 import { adminRoutes } from './routes/admin.js'
+import { deviceRoutes } from './routes/devices.js'
 
 initAuth(serviceAccount, legacyServiceAccount)  // legacyServiceAccount is null if file absent — initAuth skips nulls
 
@@ -21,5 +22,6 @@ app.register(playNotificationRoutes)
 app.register(integrationRoutes)
 app.register(alertRoutes)
 app.register(adminRoutes)
+app.register(deviceRoutes)
 
 app.listen({ port: Number(getEnv('PORT')) || 3000, host: '0.0.0.0' })
