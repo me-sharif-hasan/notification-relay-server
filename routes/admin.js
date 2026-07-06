@@ -4,6 +4,12 @@ import { adminHTML } from '../views/adminDashboard.js'
 import { getEnv, rateLimitConfig, trialConfig } from '../config.js'
 import { getPerMinuteSnapshot } from '../services/rateLimitMemory.js'
 import { resetTrial, getAllTrialUsers } from '../services/trialUsage.js'
+import { getAllDeviceTokens, getDeviceTokenCount, getDeviceFcmToken, deleteDeviceToken } from '../services/deviceTokens.js'
+
+const STALE_TOKEN_CODES = new Set([
+  'messaging/registration-token-not-registered',
+  'messaging/invalid-registration-token'
+])
 
 const TOKENS    = 'integrationTokens'
 const BLOCKLIST = 'blocklist'
@@ -81,11 +87,12 @@ export async function adminRoutes(app) {
       return reply.code(401).type('text/plain').send('Unauthorized')
     }
 
-    const [snapshot, settings, subscribers, trialUsers] = await Promise.all([
+    const [snapshot, settings, subscribers, trialUsers, deviceCount] = await Promise.all([
       db.collection(TOKENS).orderBy('createdAt', 'desc').get(),
       getSettings(),
       getSubscriberUsage(),
       getAllTrialUsers(),
+      getDeviceTokenCount(),
     ])
 
     const tokens = snapshot.docs.map(doc => {
@@ -102,7 +109,7 @@ export async function adminRoutes(app) {
     })
 
     const perMinute = getPerMinuteSnapshot()
-    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN'), trialUsers, trialConfig()))
+    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN'), trialUsers, trialConfig(), deviceCount))
   })
 
   // POST /admin/settings — update server settings
@@ -185,5 +192,94 @@ export async function adminRoutes(app) {
     }
 
     return { success: true }
+  })
+
+  // POST /admin/notifications/send — push a notification to one device
+  // (pass installId) or broadcast to every registered device (omit it).
+  // Gated by the same ADMIN_TOKEN as the rest of /admin, so a future
+  // automated CVE-alert service can call this endpoint directly with that
+  // token — this relay stays the single point of FCM distribution, the
+  // caller just decides what/when/who to send to.
+  app.post('/admin/notifications/send', async (request, reply) => {
+    if (!isAuthorized(request)) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+
+    const { title, body, data, installId } = request.body ?? {}
+    if (!title || !body) {
+      return reply.code(400).send({ error: 'title and body are required' })
+    }
+
+    const dataPayload = {}
+    if (data && typeof data === 'object') {
+      for (const [k, v] of Object.entries(data)) dataPayload[k] = String(v)
+    }
+
+    const sendEnabled = getEnv('SEND_FCM') === 'true'
+
+    // Unicast — target a single device by installId.
+    if (installId) {
+      const fcmToken = await getDeviceFcmToken(installId)
+      if (!fcmToken) {
+        return reply.code(404).send({ error: 'device not found' })
+      }
+
+      if (!sendEnabled) {
+        app.log.info({ action: 'notification_unicast_dry_run', installId, title })
+        return { success: true, total: 1, sent: 0, failed: 0, cleaned: 0, dryRun: true }
+      }
+
+      try {
+        await admin.messaging().send({
+          token: fcmToken,
+          notification: { title, body },
+          data: dataPayload
+        })
+        app.log.info({ action: 'notification_unicast', installId, title })
+        return { success: true, total: 1, sent: 1, failed: 0, cleaned: 0 }
+      } catch (err) {
+        let cleaned = 0
+        if (STALE_TOKEN_CODES.has(err.code)) {
+          await deleteDeviceToken(installId)
+          cleaned = 1
+        }
+        app.log.warn({ action: 'notification_unicast_failed', installId, err: err.message }, 'unicast send failed')
+        return reply.code(502).send({ success: false, total: 1, sent: 0, failed: 1, cleaned, error: err.message })
+      }
+    }
+
+    // Broadcast — every registered device.
+    const devices = await getAllDeviceTokens()
+
+    if (!sendEnabled) {
+      app.log.info({ action: 'notification_broadcast_dry_run', total: devices.length, title })
+      return { success: true, total: devices.length, sent: 0, failed: 0, cleaned: 0, dryRun: true }
+    }
+
+    let sent = 0
+    let cleaned = 0
+
+    for (let i = 0; i < devices.length; i += 500) {
+      const batch = devices.slice(i, i + 500)
+      const res = await admin.messaging().sendEachForMulticast({
+        tokens: batch.map(d => d.fcmToken),
+        notification: { title, body },
+        data: dataPayload
+      })
+
+      await Promise.all(res.responses.map(async (r, idx) => {
+        if (r.success) {
+          sent++
+          return
+        }
+        if (STALE_TOKEN_CODES.has(r.error?.code)) {
+          await deleteDeviceToken(batch[idx].installId)
+          cleaned++
+        }
+      }))
+    }
+
+    app.log.info({ action: 'notification_broadcast', total: devices.length, sent, cleaned, title })
+    return { success: true, total: devices.length, sent, failed: devices.length - sent, cleaned }
   })
 }

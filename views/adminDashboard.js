@@ -116,7 +116,7 @@ function trialRows(trialUsers, promptsMax, windowDays, adminToken) {
   </table>`
 }
 
-export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken, trialUsers = [], envTrialCfg = {}) {
+export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken, trialUsers = [], envTrialCfg = {}, deviceCount = 0) {
   const active         = tokens.filter(t => !t.revokedAt)
   const revoked        = tokens.filter(t => t.revokedAt)
   const skipDebug      = !!settings.skipDebugPackages
@@ -160,7 +160,7 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
     header h1 { font-size: 1.1rem; font-weight: 600; color: #f1f5f9; }
     header .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px #22c55e; }
     main { padding: 32px; max-width: 1200px; margin: 0 auto; }
-    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 20px; }
     .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 20px 24px; }
     .card .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 8px; }
     .card .value { font-size: 2rem; font-weight: 700; color: #f1f5f9; }
@@ -244,6 +244,10 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
         <div class="label">Revoked Devices</div>
         <div class="value">${revoked.length}</div>
       </div>
+      <div class="card sub-card">
+        <div class="label">Registered Push Devices</div>
+        <div class="value">${deviceCount}</div>
+      </div>
     </div>
 
     <div class="settings-bar">
@@ -291,6 +295,15 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
         <input type="number" id="trial-window-input" class="provider-select" value="${trialWindow}" min="1" max="365" style="width:80px">
         <button class="btn-reset" onclick="saveTrialWindowConfig()">Save</button>
       </div>
+    </div>
+
+    <div class="section-title" style="margin-top:32px">Send Notification</div>
+    <div class="settings-bar" style="align-items:flex-start;flex-direction:column;gap:12px">
+      <div class="setting-desc" style="margin-bottom:4px">Leave "Target installId" blank to broadcast to every registered device (${deviceCount} right now); fill it in to send to just that one device. Stale tokens are cleaned up automatically.</div>
+      <input type="text" id="notif-title-input" class="provider-select" placeholder="Title" style="width:100%">
+      <input type="text" id="notif-body-input" class="provider-select" placeholder="Body" style="width:100%">
+      <input type="text" id="notif-target-input" class="provider-select" placeholder="Target installId (optional — blank = broadcast)" style="width:100%">
+      <button class="btn-reset btn-reset-all" onclick="sendNotification()">Send</button>
     </div>
 
     <div class="section-title" style="margin-top:32px">Free Trial Users</div>
@@ -441,6 +454,33 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
       })
       if (res.ok) { showToast('Trial reset.'); setTimeout(() => location.reload(), 800) }
       else alert('Failed to reset trial.')
+    }
+
+    async function sendNotification() {
+      const title    = document.getElementById('notif-title-input').value.trim()
+      const body     = document.getElementById('notif-body-input').value.trim()
+      const installId = document.getElementById('notif-target-input').value.trim()
+      if (!title || !body) return alert('Enter both a title and a body.')
+
+      const confirmMsg = installId
+        ? 'Send this notification to device ' + installId.slice(0, 12) + '…?'
+        : 'Send this notification to all registered devices?'
+      if (!confirm(confirmMsg)) return
+
+      const payload = { title, body }
+      if (installId) payload.installId = installId
+
+      const res = await fetch('/admin/notifications/send?token=' + ADMIN_TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok) {
+        showToast('Sent to ' + data.sent + ' / ' + data.total + ' device(s)' + (data.cleaned ? ' (' + data.cleaned + ' stale removed)' : ''))
+      } else {
+        alert('Failed to send: ' + (data.error ?? res.status))
+      }
     }
 
     function showToast(msg) {
