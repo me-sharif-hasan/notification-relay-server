@@ -5,6 +5,7 @@ import { getEnv, rateLimitConfig, trialConfig } from '../config.js'
 import { getPerMinuteSnapshot } from '../services/rateLimitMemory.js'
 import { resetTrial, getAllTrialUsers } from '../services/trialUsage.js'
 import { getAllDeviceTokens, getDeviceTokenCount, getDeviceFcmToken, deleteDeviceToken } from '../services/deviceTokens.js'
+import { getAllFeatureFlags, isValidFeatureKey, setFeatureFlag, deleteFeatureFlag, KNOWN_FEATURE_KEYS } from '../services/featureFlags.js'
 
 const STALE_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
@@ -87,12 +88,13 @@ export async function adminRoutes(app) {
       return reply.code(401).type('text/plain').send('Unauthorized')
     }
 
-    const [snapshot, settings, subscribers, trialUsers, deviceCount] = await Promise.all([
+    const [snapshot, settings, subscribers, trialUsers, deviceCount, features] = await Promise.all([
       db.collection(TOKENS).orderBy('createdAt', 'desc').get(),
       getSettings(),
       getSubscriberUsage(),
       getAllTrialUsers(),
       getDeviceTokenCount(),
+      getAllFeatureFlags(),
     ])
 
     const tokens = snapshot.docs.map(doc => {
@@ -109,7 +111,7 @@ export async function adminRoutes(app) {
     })
 
     const perMinute = getPerMinuteSnapshot()
-    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN'), trialUsers, trialConfig(), deviceCount))
+    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN'), trialUsers, trialConfig(), deviceCount, features, KNOWN_FEATURE_KEYS))
   })
 
   // POST /admin/settings — update server settings
@@ -192,6 +194,45 @@ export async function adminRoutes(app) {
     }
 
     return { success: true }
+  })
+
+  // POST /admin/features/set — create or update a feature killswitch.
+  // Key must be camelCase (e.g. interstitialAd, bannerAd, showAiAgent) —
+  // this is the naming convention the app's /features consumer relies on.
+  app.post('/admin/features/set', async (request, reply) => {
+    if (!isAuthorized(request)) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+
+    const { key, enabled } = request.body ?? {}
+    if (!isValidFeatureKey(key)) {
+      return reply.code(400).send({ error: 'key must be a camelCase string, e.g. showAiAgent' })
+    }
+    if (typeof enabled !== 'boolean') {
+      return reply.code(400).send({ error: 'enabled must be a boolean' })
+    }
+
+    await setFeatureFlag(key, enabled)
+    app.log.info({ key, enabled, action: 'feature_flag_set' }, 'feature flag updated via admin')
+    return { success: true }
+  })
+
+  // POST /admin/features/delete — remove a custom flag's override, reverting
+  // it to the default (disabled). Pre-seeded keys (KNOWN_FEATURE_KEYS) simply
+  // fall back to their default the next time they're read.
+  app.post('/admin/features/delete', async (request, reply) => {
+    if (!isAuthorized(request)) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+
+    const { key } = request.body ?? {}
+    if (!isValidFeatureKey(key)) {
+      return reply.code(400).send({ error: 'key must be a camelCase string' })
+    }
+
+    await deleteFeatureFlag(key)
+    app.log.info({ key, action: 'feature_flag_deleted' }, 'feature flag deleted via admin')
+    return { success: true, prefilled: KNOWN_FEATURE_KEYS.includes(key) }
   })
 
   // POST /admin/notifications/send — push a notification to one device
