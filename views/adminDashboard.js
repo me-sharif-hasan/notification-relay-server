@@ -1,3 +1,40 @@
+function featureRows(features, knownKeys) {
+  const keys = Object.keys(features).sort()
+  if (!keys.length) return '<div class="empty">No feature flags yet.</div>'
+
+  const rows = keys.map(key => {
+    const enabled = !!features[key]
+    const isCustom = !knownKeys.includes(key)
+    return `
+      <tr>
+        <td class="hash">${key}</td>
+        <td>
+          <div class="toggle-wrap">
+            <span class="toggle-status" id="feature-status-${key}">${enabled ? 'ON' : 'OFF'}</span>
+            <label class="toggle">
+              <input type="checkbox" id="feature-toggle-${key}" ${enabled ? 'checked' : ''} onchange="toggleFeature('${key}', this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </td>
+        <td class="action-cell">
+          ${isCustom ? `<button class="btn-revoke" onclick="deleteFeature('${key}')">Remove</button>` : '<span class="muted">—</span>'}
+        </td>
+      </tr>`
+  }).join('')
+
+  return `<table>
+    <thead>
+      <tr>
+        <th>Feature Key</th>
+        <th>Status</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`
+}
+
 export function fmtDate(iso) {
   if (!iso) return '<span class="muted">—</span>'
   const d = new Date(iso)
@@ -116,7 +153,7 @@ function trialRows(trialUsers, promptsMax, windowDays, adminToken) {
   </table>`
 }
 
-export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken, trialUsers = [], envTrialCfg = {}, deviceCount = 0) {
+export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken, trialUsers = [], envTrialCfg = {}, deviceCount = 0, features = {}, knownFeatureKeys = []) {
   const active         = tokens.filter(t => !t.revokedAt)
   const revoked        = tokens.filter(t => t.revokedAt)
   const skipDebug      = !!settings.skipDebugPackages
@@ -306,6 +343,16 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
       <button class="btn-reset btn-reset-all" onclick="sendNotification()">Send</button>
     </div>
 
+    <div class="section-title" style="margin-top:32px">Feature Killswitches</div>
+    <div class="table-wrap">
+      ${featureRows(features, knownFeatureKeys)}
+    </div>
+    <div class="settings-bar" style="align-items:flex-start;flex-direction:column;gap:12px;margin-bottom:32px">
+      <div class="setting-desc" style="margin-bottom:4px">Add a new feature key. Must be camelCase (e.g. <code>showAiAgent</code>) — starts lowercase, letters/digits only. New flags default to OFF.</div>
+      <input type="text" id="feature-key-input" class="provider-select" placeholder="newFeatureKey" style="width:100%">
+      <button class="btn-reset btn-reset-all" onclick="addFeature()">Add</button>
+    </div>
+
     <div class="section-title" style="margin-top:32px">Free Trial Users</div>
     <div class="table-wrap">
       ${trialRows(trialUsers, trialMax, trialWindow, adminToken)}
@@ -480,6 +527,58 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
         showToast('Sent to ' + data.sent + ' / ' + data.total + ' device(s)' + (data.cleaned ? ' (' + data.cleaned + ' stale removed)' : ''))
       } else {
         alert('Failed to send: ' + (data.error ?? res.status))
+      }
+    }
+
+    async function toggleFeature(key, enabled) {
+      document.getElementById('feature-status-' + key).textContent = enabled ? 'ON' : 'OFF'
+      const res = await fetch('/admin/features/set?token=' + ADMIN_TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, enabled })
+      })
+      if (res.ok) {
+        showToast('Feature "' + key + '" ' + (enabled ? 'enabled' : 'disabled'))
+      } else {
+        alert('Failed to save feature flag.')
+        document.getElementById('feature-toggle-' + key).checked = !enabled
+        document.getElementById('feature-status-' + key).textContent = !enabled ? 'ON' : 'OFF'
+      }
+    }
+
+    async function addFeature() {
+      const input = document.getElementById('feature-key-input')
+      const key = input.value.trim()
+      if (!/^[a-z][a-zA-Z0-9]*$/.test(key)) {
+        return alert('Key must be camelCase: start lowercase, letters/digits only (e.g. showAiAgent).')
+      }
+      const res = await fetch('/admin/features/set?token=' + ADMIN_TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, enabled: false })
+      })
+      if (res.ok) {
+        input.value = ''
+        showToast('Feature "' + key + '" added (OFF)')
+        setTimeout(() => location.reload(), 600)
+      } else {
+        const data = await res.json().catch(() => ({}))
+        alert('Failed to add feature: ' + (data.error ?? res.status))
+      }
+    }
+
+    async function deleteFeature(key) {
+      if (!confirm('Remove feature key "' + key + '"? It will revert to disabled by default.')) return
+      const res = await fetch('/admin/features/delete?token=' + ADMIN_TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key })
+      })
+      if (res.ok) {
+        showToast('Feature "' + key + '" removed')
+        setTimeout(() => location.reload(), 600)
+      } else {
+        alert('Failed to remove feature.')
       }
     }
 

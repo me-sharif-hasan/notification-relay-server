@@ -10,6 +10,7 @@ import { integrationRoutes } from './routes/integrations.js'
 import { alertRoutes } from './routes/alert.js'
 import { adminRoutes } from './routes/admin.js'
 import { deviceRoutes } from './routes/devices.js'
+import { featureRoutes } from './routes/features.js'
 
 initAuth(serviceAccount, legacyServiceAccount)  // legacyServiceAccount is null if file absent — initAuth skips nulls
 
@@ -23,5 +24,6 @@ app.register(integrationRoutes)
 app.register(alertRoutes)
 app.register(adminRoutes)
 app.register(deviceRoutes)
+app.register(featureRoutes)
 
 app.listen({ port: Number(getEnv('PORT')) || 3000, host: '0.0.0.0' })
