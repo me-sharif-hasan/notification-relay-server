@@ -1,3 +1,7 @@
+function toSnakeCase(key) {
+  return key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
+}
+
 function featureRows(features, knownKeys) {
   const keys = Object.keys(features).sort()
   if (!keys.length) return '<div class="empty">No feature flags yet.</div>'
@@ -8,6 +12,7 @@ function featureRows(features, knownKeys) {
     return `
       <tr>
         <td class="hash">${key}</td>
+        <td class="pkg"><code>${toSnakeCase(key)}</code></td>
         <td>
           <div class="toggle-wrap">
             <span class="toggle-status" id="feature-status-${key}">${enabled ? 'ON' : 'OFF'}</span>
@@ -26,7 +31,8 @@ function featureRows(features, knownKeys) {
   return `<table>
     <thead>
       <tr>
-        <th>Feature Key</th>
+        <th>Feature Key (admin)</th>
+        <th>Public API Key</th>
         <th>Status</th>
         <th>Action</th>
       </tr>
@@ -348,8 +354,8 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
       ${featureRows(features, knownFeatureKeys)}
     </div>
     <div class="settings-bar" style="align-items:flex-start;flex-direction:column;gap:12px;margin-bottom:32px">
-      <div class="setting-desc" style="margin-bottom:4px">Add a new feature key. Must be camelCase (e.g. <code>showAiAgent</code>) — starts lowercase, letters/digits only. New flags default to OFF.</div>
-      <input type="text" id="feature-key-input" class="provider-select" placeholder="newFeatureKey" style="width:100%">
+      <div class="setting-desc" style="margin-bottom:4px">Add a new feature key. Must be camelCase (e.g. <code>showAiAgent</code>) — starts lowercase, letters/digits only. The public <code>/features</code> API exposes it as snake_case (e.g. <code>show_ai_agent</code>). New flags default to OFF.</div>
+      <input type="text" id="feature-key-input" class="provider-select" placeholder="newFeatureKey (e.g. showAiAgent)" style="width:100%">
       <button class="btn-reset btn-reset-all" onclick="addFeature()">Add</button>
     </div>
 
