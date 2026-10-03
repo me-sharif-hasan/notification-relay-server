@@ -37,6 +37,8 @@ jobs:
           PLAY_SUBSCRIPTION_PRODUCT_ID=${{ secrets.PLAY_SUBSCRIPTION_PRODUCT_ID }}
           PLAY_OFFER_TOKEN_FULL=${{ secrets.PLAY_OFFER_TOKEN_FULL }}
           PLAY_OFFER_TOKEN_DISCOUNTED=${{ secrets.PLAY_OFFER_TOKEN_DISCOUNTED }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           EOF
 
       - name: Setup SSH

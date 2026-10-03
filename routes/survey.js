@@ -1,7 +1,8 @@
 import { createHash } from 'crypto'
 import { verifyIntegrityToken, checkVerdicts } from '../auth/integrity.js'
 import { getEnv } from '../config.js'
-import { parseCountry, parseSurvey, recordSurvey } from '../services/surveyStats.js'
+import { parseCountry, parsePlace, parseSurvey, recordSurvey } from '../services/surveyStats.js'
+import { notifyNewInstall } from '../services/surveyNotifier.js'
 
 const FRESH_MS = 10 * 60_000
 const MAX_PER_MIN = 300
@@ -30,10 +31,12 @@ function claimToken(tokenHash, now) {
 }
 
 export async function surveyRoutes(app) {
-  // POST /survey - anonymous onboarding answers. Authenticated by a fresh,
+  // POST /survey - sent when the user taps Get Started, with or without
+  // answers, so it also marks the install. Authenticated by a fresh,
   // single-use Play Integrity token, not by a JWT, so free users can send it
-  // too. Only aggregate counters are stored. 'warn' keeps the per-request
-  // access log (which would include the client IP) out of the logs.
+  // too. Stores counters plus an anonymous row (answers and a coarse location,
+  // never the IP). 'warn' keeps the per-request access log (which would
+  // include the client IP) out of the logs.
   app.post('/survey', { logLevel: 'warn' }, async (request, reply) => {
     const { integrityToken, packageName } = request.body ?? {}
     const survey = parseSurvey(request.body)
@@ -73,13 +76,21 @@ export async function surveyRoutes(app) {
       return reply.code(400).send({ success: false, error: 'stale_token' })
     }
 
+    const entry = {
+      ...survey,
+      country: parseCountry(request.headers['cf-ipcountry']),
+      region: parsePlace(request.headers['cf-region']),
+      city: parsePlace(request.headers['cf-ipcity'])
+    }
+
     try {
-      await recordSurvey({ ...survey, country: parseCountry(request.headers['cf-ipcountry']) })
+      await recordSurvey(entry)
     } catch (err) {
       request.log.error({ err: err.message }, 'survey write failed')
       return reply.code(500).send({ success: false, error: 'write_failed' })
     }
 
+    notifyNewInstall(entry)
     return { success: true }
   })
 }

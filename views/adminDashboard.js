@@ -1,3 +1,5 @@
+import { SOURCE_LABELS, USE_LABELS, escapeHtml, countryName, countryFlag } from '../services/surveyLabels.js'
+
 function toSnakeCase(key) {
   return key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
 }
@@ -159,23 +161,6 @@ function trialRows(trialUsers, promptsMax, windowDays, adminToken) {
   </table>`
 }
 
-const SURVEY_SOURCE_LABELS = {
-  search: 'Search',
-  friend: 'Friend or colleague',
-  youtube: 'YouTube',
-  reddit: 'Reddit or forums',
-  social: 'Social media',
-  other: 'Other',
-  none: 'No answer'
-}
-
-const SURVEY_USE_LABELS = {
-  admin: 'Server administration',
-  ssh: 'SSH terminal',
-  monitor: 'Server monitoring',
-  other: 'Other'
-}
-
 function surveyBarTable(title, labels, counts, base) {
   const rows = Object.entries(labels).map(([key, label]) => {
     const n = counts[key] ?? 0
@@ -194,15 +179,15 @@ function surveyBarTable(title, labels, counts, base) {
   }).join('')
 
   return `<table>
-    <thead><tr><th>${title}</th><th>Responses</th><th>Share</th></tr></thead>
+    <thead><tr><th>${title}</th><th>Installs</th><th>Share</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`
 }
 
 function surveyMatrix(byPair) {
-  const useKeys = Object.keys(SURVEY_USE_LABELS)
-  const head = useKeys.map(u => `<th>${SURVEY_USE_LABELS[u]}</th>`).join('')
-  const rows = Object.entries(SURVEY_SOURCE_LABELS).map(([source, label]) => {
+  const useKeys = Object.keys(USE_LABELS)
+  const head = useKeys.map(u => `<th>${USE_LABELS[u]}</th>`).join('')
+  const rows = Object.entries(SOURCE_LABELS).map(([source, label]) => {
     const cells = useKeys.map(u => {
       const n = byPair[`${source}__${u}`] ?? 0
       return n ? `<td><span class="hit-count">${n.toLocaleString()}</span></td>` : '<td><span class="muted">0</span></td>'
@@ -226,21 +211,12 @@ function surveyRecentDays(byDay) {
 
   const rows = days.map(d => `<tr><td>${d}</td><td class="hits"><span class="hit-count">${byDay[d].toLocaleString()}</span></td></tr>`).join('')
   return `<table>
-    <thead><tr><th>Last 14 days (UTC)</th><th>Responses</th></tr></thead>
+    <thead><tr><th>Last 14 days (UTC)</th><th>Installs</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`
 }
 
 const COUNTRY_TOP_N = 15
-const regionNames = new Intl.DisplayNames(['en'], { type: 'region' })
-
-function countryName(code) {
-  try {
-    return regionNames.of(code) ?? code
-  } catch {
-    return code
-  }
-}
 
 function surveyCountries(byCountry, total) {
   const entries = Object.entries(byCountry)
@@ -275,19 +251,19 @@ function surveyCountries(byCountry, total) {
   }).join('')
 
   return `<table>
-    <thead><tr><th>Country (from Cloudflare, top ${COUNTRY_TOP_N})</th><th>Responses</th><th>Share</th></tr></thead>
+    <thead><tr><th>Country (from Cloudflare, top ${COUNTRY_TOP_N})</th><th>Installs</th><th>Share</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`
 }
 
-function surveySection(survey) {
+function surveyAllTime(survey) {
   if (!survey) return '<div class="table-wrap"><div class="empty">Survey stats unavailable right now.</div></div>'
-  if (!survey.total) return '<div class="table-wrap"><div class="empty">No onboarding survey responses yet.</div></div>'
+  if (!survey.total) return '<div class="table-wrap"><div class="empty">No installs recorded yet.</div></div>'
 
   return `
     <div class="stats">
       <div class="card sub-card">
-        <div class="label">Responses</div>
+        <div class="label">Installs (all time)</div>
         <div class="value">${survey.total.toLocaleString()}</div>
       </div>
       <div class="card">
@@ -295,14 +271,85 @@ function surveySection(survey) {
         <div class="value" style="font-size:1rem">${fmtDate(survey.updatedAt)}</div>
       </div>
     </div>
-    <div class="table-wrap">${surveyBarTable('How they found ServerKit', SURVEY_SOURCE_LABELS, survey.bySource, survey.total)}</div>
-    <div class="table-wrap">${surveyBarTable('What they use it for (multi-select, share of all responses)', SURVEY_USE_LABELS, survey.byUse, survey.total)}</div>
+    <div class="table-wrap">${surveyBarTable('How they found ServerKit', SOURCE_LABELS, survey.bySource, survey.total)}</div>
+    <div class="table-wrap">${surveyBarTable('What they use it for (multi-select, share of all responses)', USE_LABELS, survey.byUse, survey.total)}</div>
     <div class="table-wrap">${surveyMatrix(survey.byPair)}</div>
     <div class="table-wrap">${surveyCountries(survey.byCountry ?? {}, survey.total)}</div>
     ${surveyRecentDays(survey.byDay) ? `<div class="table-wrap">${surveyRecentDays(survey.byDay)}</div>` : ''}`
 }
 
-export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken, trialUsers = [], envTrialCfg = {}, deviceCount = 0, features = {}, knownFeatureKeys = [], survey = null) {
+function surveyToday(today) {
+  if (!today) return '<div class="table-wrap"><div class="empty">Today\'s stats unavailable right now.</div></div>'
+
+  const entries = Object.entries(today.byCountry).sort((a, b) => b[1] - a[1])
+  const rows = entries.map(([code, n]) => {
+    const known = /^[A-Z]{2}$/.test(code)
+    const label = known ? `${countryFlag(code)} ${countryName(code)} <span class="muted">${code}</span>` : 'Unknown'
+    const p = today.total ? Math.round((n / today.total) * 100) : 0
+    return `
+      <tr>
+        <td>${label}</td>
+        <td class="hits"><span class="hit-count">${n.toLocaleString()}</span></td>
+        <td>
+          <div class="progress-wrap">
+            <div class="progress-bar"><div class="progress-fill bar-ok" style="width:${p}%"></div></div>
+            <span class="progress-label">${p}%</span>
+          </div>
+        </td>
+      </tr>`
+  }).join('')
+
+  const table = rows
+    ? `<div class="table-wrap"><table>
+        <thead><tr><th>Today by country (UTC)</th><th>Installs</th><th>Share</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`
+    : '<div class="table-wrap"><div class="empty">No installs yet today (UTC).</div></div>'
+
+  return `
+    <div class="stats">
+      <div class="card active-card">
+        <div class="label">Installs today (${today.day} UTC)</div>
+        <div class="value">${today.total.toLocaleString()}${today.capped ? '+' : ''}</div>
+      </div>
+      <div class="card">
+        <div class="label">Countries today</div>
+        <div class="value">${entries.filter(([code]) => /^[A-Z]{2}$/.test(code)).length}</div>
+      </div>
+    </div>
+    ${table}`
+}
+
+function surveyRecent(rows) {
+  if (!rows) return '<div class="table-wrap"><div class="empty">Recent installs unavailable right now.</div></div>'
+  if (!rows.length) return '<div class="table-wrap"><div class="empty">No installs recorded yet.</div></div>'
+
+  const body = rows.map(r => {
+    const place = /^[A-Z]{2}$/.test(r.country)
+      ? `${countryFlag(r.country)} ${escapeHtml(countryName(r.country))} <span class="muted">${r.country}</span>`
+      : 'Unknown'
+    const detail = [r.city, r.region].filter(Boolean).map(escapeHtml).join(', ')
+    const uses = r.uses.map(u => escapeHtml(USE_LABELS[u] ?? u)).join(', ')
+    return `
+      <tr>
+        <td>${fmtDate(r.time)}</td>
+        <td>${place}${detail ? `<div class="muted">${detail}</div>` : ''}</td>
+        <td>${escapeHtml(SOURCE_LABELS[r.source] ?? r.source)}</td>
+        <td>${uses || '<span class="muted">-</span>'}</td>
+      </tr>`
+  }).join('')
+
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>Latest installs</th><th>Location</th><th>Found us via</th><th>Uses it for</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table></div>`
+}
+
+function surveySection(survey, today, recent) {
+  return `${surveyToday(today)}${surveyRecent(recent)}${surveyAllTime(survey)}`
+}
+
+export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken, trialUsers = [], envTrialCfg = {}, deviceCount = 0, features = {}, knownFeatureKeys = [], survey = null, surveyTodayStats = null, surveyRecentRows = null) {
   const active         = tokens.filter(t => !t.revokedAt)
   const revoked        = tokens.filter(t => t.revokedAt)
   const skipDebug      = !!settings.skipDebugPackages
@@ -484,7 +531,7 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
     </div>
 
     <div class="section-title" style="margin-top:32px">Onboarding Survey</div>
-    ${surveySection(survey)}
+    ${surveySection(survey, surveyTodayStats, surveyRecentRows)}
 
     <div class="section-title" style="margin-top:32px">Send Notification</div>
     <div class="settings-bar" style="align-items:flex-start;flex-direction:column;gap:12px">

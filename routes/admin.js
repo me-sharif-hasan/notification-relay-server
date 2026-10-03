@@ -6,7 +6,8 @@ import { getPerMinuteSnapshot } from '../services/rateLimitMemory.js'
 import { resetTrial, getAllTrialUsers } from '../services/trialUsage.js'
 import { getAllDeviceTokens, getDeviceTokenCount, getDeviceFcmToken, deleteDeviceToken } from '../services/deviceTokens.js'
 import { getAllFeatureFlags, isValidFeatureKey, setFeatureFlag, deleteFeatureFlag, KNOWN_FEATURE_KEYS } from '../services/featureFlags.js'
-import { getSurveyStats } from '../services/surveyStats.js'
+import { getSurveyStats, getTodayStats, getRecentResponses } from '../services/surveyStats.js'
+import { sendTestMessage } from '../services/surveyNotifier.js'
 
 const STALE_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
@@ -89,7 +90,7 @@ export async function adminRoutes(app) {
       return reply.code(401).type('text/plain').send('Unauthorized')
     }
 
-    const [snapshot, settings, subscribers, trialUsers, deviceCount, features, survey] = await Promise.all([
+    const [snapshot, settings, subscribers, trialUsers, deviceCount, features, survey, surveyToday, surveyRecent] = await Promise.all([
       db.collection(TOKENS).orderBy('createdAt', 'desc').get(),
       getSettings(),
       getSubscriberUsage(),
@@ -97,6 +98,8 @@ export async function adminRoutes(app) {
       getDeviceTokenCount(),
       getAllFeatureFlags(),
       getSurveyStats().catch(() => null),
+      getTodayStats().catch(() => null),
+      getRecentResponses().catch(() => null),
     ])
 
     const tokens = snapshot.docs.map(doc => {
@@ -113,7 +116,7 @@ export async function adminRoutes(app) {
     })
 
     const perMinute = getPerMinuteSnapshot()
-    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN'), trialUsers, trialConfig(), deviceCount, features, KNOWN_FEATURE_KEYS, survey))
+    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN'), trialUsers, trialConfig(), deviceCount, features, KNOWN_FEATURE_KEYS, survey, surveyToday, surveyRecent))
   })
 
   // POST /admin/settings — update server settings
@@ -196,6 +199,16 @@ export async function adminRoutes(app) {
     }
 
     return { success: true }
+  })
+
+  // POST /admin/telegram/test - send a test message to the Telegram chat that
+  // receives new-install alerts, to check the bot token and chat id.
+  app.post('/admin/telegram/test', async (request, reply) => {
+    if (!isAuthorized(request)) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+    const result = await sendTestMessage()
+    return reply.code(result.sent ? 200 : 502).send(result)
   })
 
   // POST /admin/features/set — create or update a feature killswitch.
