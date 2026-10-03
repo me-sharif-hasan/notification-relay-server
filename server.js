@@ -12,6 +12,8 @@ import { adminRoutes } from './routes/admin.js'
 import { deviceRoutes } from './routes/devices.js'
 import { featureRoutes } from './routes/features.js'
 import { surveyRoutes } from './routes/survey.js'
+import { telegramWebhookRoutes, setupTelegramWebhook } from './routes/telegramWebhook.js'
+import { startDailyAnalysis } from './services/analytics/scheduler.js'
 
 initAuth(serviceAccount, legacyServiceAccount)  // legacyServiceAccount is null if file absent — initAuth skips nulls
 
@@ -27,5 +29,15 @@ app.register(adminRoutes)
 app.register(deviceRoutes)
 app.register(featureRoutes)
 app.register(surveyRoutes)
+app.register(telegramWebhookRoutes)
 
-app.listen({ port: Number(getEnv('PORT')) || 3000, host: '0.0.0.0' })
+function startBackgroundTasks() {
+  try {
+    setupTelegramWebhook()
+    startDailyAnalysis()
+  } catch (err) {
+    app.log.warn({ err: err.message }, 'background tasks failed to start')
+  }
+}
+
+app.listen({ port: Number(getEnv('PORT')) || 3000, host: '0.0.0.0' }).then(startBackgroundTasks)

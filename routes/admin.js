@@ -8,6 +8,8 @@ import { getAllDeviceTokens, getDeviceTokenCount, getDeviceFcmToken, deleteDevic
 import { getAllFeatureFlags, isValidFeatureKey, setFeatureFlag, deleteFeatureFlag, KNOWN_FEATURE_KEYS } from '../services/featureFlags.js'
 import { getSurveyStats, getTodayStats, getRecentResponses } from '../services/surveyStats.js'
 import { sendTestMessage } from '../services/surveyNotifier.js'
+import { analysisBusy, deliverAnalysis } from '../services/analytics/delivery.js'
+import { MAX_DAYS } from '../services/analytics/report.js'
 
 const STALE_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
@@ -209,6 +211,20 @@ export async function adminRoutes(app) {
     }
     const result = await sendTestMessage()
     return reply.code(result.sent ? 200 : 502).send(result)
+  })
+
+  // POST /admin/analysis/run?days=7 - run the analytics analysis now and send
+  // it to Telegram. Returns at once; the report arrives in the chat.
+  app.post('/admin/analysis/run', async (request, reply) => {
+    if (!isAuthorized(request)) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+    if (analysisBusy()) {
+      return reply.code(409).send({ error: 'an analysis is already running' })
+    }
+    const days = Math.min(Math.max(Math.floor(Number(request.query.days)) || 7, 1), MAX_DAYS)
+    deliverAnalysis({ days, question: String(request.query.question ?? '').slice(0, 300) }).catch(() => {})
+    return reply.code(202).send({ started: true, days })
   })
 
   // POST /admin/features/set — create or update a feature killswitch.

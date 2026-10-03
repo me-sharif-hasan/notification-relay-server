@@ -16,10 +16,14 @@ jobs:
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
           SERVICE_ACCOUNT_LEGACY_JSON: ${{ secrets.SERVICE_ACCOUNT_LEGACY_JSON }}
+          GA_SERVICE_ACCOUNT_JSON: ${{ secrets.GA_SERVICE_ACCOUNT_JSON }}
         run: |
           echo "$SERVICE_ACCOUNT_JSON" > serviceaccount.json
           if [ -n "$SERVICE_ACCOUNT_LEGACY_JSON" ]; then
             echo "$SERVICE_ACCOUNT_LEGACY_JSON" > serviceaccount_legacy.json
+          fi
+          if [ -n "$GA_SERVICE_ACCOUNT_JSON" ]; then
+            printf '%s' "$GA_SERVICE_ACCOUNT_JSON" > ga_serviceaccount.json
           fi
 
       - name: Write .env
@@ -39,6 +43,9 @@ jobs:
           PLAY_OFFER_TOKEN_DISCOUNTED=${{ secrets.PLAY_OFFER_TOKEN_DISCOUNTED }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          ANALYTICS_DEEPSEEK_API_KEY=${{ secrets.ANALYTICS_DEEPSEEK_API_KEY }}
+          GA_BQ_PROJECT=${{ secrets.GA_BQ_PROJECT }}
+          GA_BQ_DATASET=${{ secrets.GA_BQ_DATASET }}
           EOF
 
       - name: Setup SSH
