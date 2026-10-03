@@ -6,6 +6,7 @@ import { getPerMinuteSnapshot } from '../services/rateLimitMemory.js'
 import { resetTrial, getAllTrialUsers } from '../services/trialUsage.js'
 import { getAllDeviceTokens, getDeviceTokenCount, getDeviceFcmToken, deleteDeviceToken } from '../services/deviceTokens.js'
 import { getAllFeatureFlags, isValidFeatureKey, setFeatureFlag, deleteFeatureFlag, KNOWN_FEATURE_KEYS } from '../services/featureFlags.js'
+import { getSurveyStats } from '../services/surveyStats.js'
 
 const STALE_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
@@ -88,13 +89,14 @@ export async function adminRoutes(app) {
       return reply.code(401).type('text/plain').send('Unauthorized')
     }
 
-    const [snapshot, settings, subscribers, trialUsers, deviceCount, features] = await Promise.all([
+    const [snapshot, settings, subscribers, trialUsers, deviceCount, features, survey] = await Promise.all([
       db.collection(TOKENS).orderBy('createdAt', 'desc').get(),
       getSettings(),
       getSubscriberUsage(),
       getAllTrialUsers(),
       getDeviceTokenCount(),
       getAllFeatureFlags(),
+      getSurveyStats().catch(() => null),
     ])
 
     const tokens = snapshot.docs.map(doc => {
@@ -111,7 +113,7 @@ export async function adminRoutes(app) {
     })
 
     const perMinute = getPerMinuteSnapshot()
-    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN'), trialUsers, trialConfig(), deviceCount, features, KNOWN_FEATURE_KEYS))
+    return reply.type('text/html').send(adminHTML(tokens, settings, subscribers, rateLimitConfig(), perMinute, getEnv('ADMIN_TOKEN'), trialUsers, trialConfig(), deviceCount, features, KNOWN_FEATURE_KEYS, survey))
   })
 
   // POST /admin/settings — update server settings
