@@ -1,7 +1,7 @@
 import { createHash } from 'crypto'
 import { verifyIntegrityToken, checkVerdicts } from '../auth/integrity.js'
 import { getEnv } from '../config.js'
-import { parseSurvey, recordSurvey } from '../services/surveyStats.js'
+import { parseCountry, parseSurvey, recordSurvey } from '../services/surveyStats.js'
 
 const FRESH_MS = 10 * 60_000
 const MAX_PER_MIN = 300
@@ -74,7 +74,7 @@ export async function surveyRoutes(app) {
     }
 
     try {
-      await recordSurvey(survey)
+      await recordSurvey({ ...survey, country: parseCountry(request.headers['cf-ipcountry']) })
     } catch (err) {
       request.log.error({ err: err.message }, 'survey write failed')
       return reply.code(500).send({ success: false, error: 'write_failed' })

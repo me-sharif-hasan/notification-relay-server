@@ -19,7 +19,14 @@ export function parseSurvey(body) {
   return { source, uses: unique }
 }
 
-export async function recordSurvey({ source, uses }) {
+// ISO country code from Cloudflare's CF-IPCountry header, or 'unknown'
+// (missing header, XX = unknown, T1 = Tor). The IP itself is never read here.
+export function parseCountry(headerValue) {
+  const code = typeof headerValue === 'string' ? headerValue.trim().toUpperCase() : ''
+  return /^[A-Z]{2}$/.test(code) && code !== 'XX' && code !== 'T1' ? code : 'unknown'
+}
+
+export async function recordSurvey({ source, uses, country = 'unknown' }) {
   const one = admin.firestore.FieldValue.increment(1)
   const sourceKey = source ?? 'none'
   const day = new Date().toISOString().slice(0, 10)
@@ -27,6 +34,7 @@ export async function recordSurvey({ source, uses }) {
   const patch = {
     total: one,
     bySource: { [sourceKey]: one },
+    byCountry: { [country]: one },
     byDay: { [day]: one },
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   }
@@ -47,6 +55,7 @@ export async function getSurveyStats() {
     bySource: d.bySource ?? {},
     byUse: d.byUse ?? {},
     byPair: d.byPair ?? {},
+    byCountry: d.byCountry ?? {},
     byDay: d.byDay ?? {},
     updatedAt: d.updatedAt?.toDate?.()?.toISOString() ?? null
   }

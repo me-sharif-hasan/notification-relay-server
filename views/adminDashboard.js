@@ -231,6 +231,55 @@ function surveyRecentDays(byDay) {
   </table>`
 }
 
+const COUNTRY_TOP_N = 15
+const regionNames = new Intl.DisplayNames(['en'], { type: 'region' })
+
+function countryName(code) {
+  try {
+    return regionNames.of(code) ?? code
+  } catch {
+    return code
+  }
+}
+
+function surveyCountries(byCountry, total) {
+  const entries = Object.entries(byCountry)
+    .filter(([code, n]) => /^[A-Z]{2}$/.test(code) && n > 0)
+    .sort((a, b) => b[1] - a[1])
+  const known = entries.reduce((sum, [, n]) => sum + n, 0)
+  const unknown = Math.max(0, total - known)
+
+  if (!known) {
+    return `<div class="empty">No country data yet. If responses are arriving, enable IP Geolocation (Network settings) or the "Add visitor location headers" managed transform in Cloudflare.</div>`
+  }
+
+  const top = entries.slice(0, COUNTRY_TOP_N)
+  const otherCount = entries.slice(COUNTRY_TOP_N).reduce((sum, [, n]) => sum + n, 0)
+  const rows = [
+    ...top.map(([code, n]) => [`${countryName(code)} <span class="muted">${code}</span>`, n]),
+    ...(otherCount ? [['Other countries', otherCount]] : []),
+    ...(unknown ? [['Unknown', unknown]] : [])
+  ].map(([label, n]) => {
+    const p = total ? Math.round((n / total) * 100) : 0
+    return `
+      <tr>
+        <td>${label}</td>
+        <td class="hits"><span class="hit-count">${n.toLocaleString()}</span></td>
+        <td>
+          <div class="progress-wrap">
+            <div class="progress-bar"><div class="progress-fill bar-ok" style="width:${p}%"></div></div>
+            <span class="progress-label">${p}%</span>
+          </div>
+        </td>
+      </tr>`
+  }).join('')
+
+  return `<table>
+    <thead><tr><th>Country (from Cloudflare, top ${COUNTRY_TOP_N})</th><th>Responses</th><th>Share</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`
+}
+
 function surveySection(survey) {
   if (!survey) return '<div class="table-wrap"><div class="empty">Survey stats unavailable right now.</div></div>'
   if (!survey.total) return '<div class="table-wrap"><div class="empty">No onboarding survey responses yet.</div></div>'
@@ -249,6 +298,7 @@ function surveySection(survey) {
     <div class="table-wrap">${surveyBarTable('How they found ServerKit', SURVEY_SOURCE_LABELS, survey.bySource, survey.total)}</div>
     <div class="table-wrap">${surveyBarTable('What they use it for (multi-select, share of all responses)', SURVEY_USE_LABELS, survey.byUse, survey.total)}</div>
     <div class="table-wrap">${surveyMatrix(survey.byPair)}</div>
+    <div class="table-wrap">${surveyCountries(survey.byCountry ?? {}, survey.total)}</div>
     ${surveyRecentDays(survey.byDay) ? `<div class="table-wrap">${surveyRecentDays(survey.byDay)}</div>` : ''}`
 }
 
