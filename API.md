@@ -174,9 +174,13 @@ When an alert is received, the app gets an FCM notification with this structure:
   "level": "warn",
   "value": "87",
   "host": "my-vps-hostname",
+  "server_name": "Production (ubuntu 24)",
+  "token_id": "sha256 of the integration token",
   "timestamp": "2026-06-11T10:00:00Z"
 }
 ```
+
+`server_name` is the label the app gave the agent (empty if the agent did not send one). `token_id` lets the app work out which of its servers sent the alert, so a tap can open that server.
 
 > Note: All data payload values are strings (FCM requirement).
 

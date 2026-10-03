@@ -3,6 +3,7 @@ import { getSettings } from '../services/settings.js'
 import { isRateLimited } from '../services/rateLimitMemory.js'
 import { getEnv } from '../config.js'
 import { muteStatus } from '../services/muteState.js'
+import { buildAlertData } from '../services/alertPayload.js'
 
 const TOKENS = 'integrationTokens'
 
@@ -38,7 +39,7 @@ export async function alertRoutes(app) {
     }
 
     const { fcmToken, packageName } = doc.data()
-    const { metric, level, value, host, timestamp } = request.body ?? {}
+    const { metric, level, value, host, timestamp, server_name } = request.body ?? {}
 
     await docRef.update({
       lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -65,7 +66,7 @@ export async function alertRoutes(app) {
       await admin.messaging().send({
         token: fcmToken,
         notification: { title: notification.title, body: notification.body },
-        data: { metric, level, value: String(value), host, timestamp: timestamp ?? new Date().toISOString() },
+        data: buildAlertData({ metric, level, value, host, server_name, timestamp }, token),
         android: {
           priority: 'high',
           notification: { channel_id: 'monitor_alerts' }
