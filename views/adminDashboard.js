@@ -159,7 +159,100 @@ function trialRows(trialUsers, promptsMax, windowDays, adminToken) {
   </table>`
 }
 
-export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken, trialUsers = [], envTrialCfg = {}, deviceCount = 0, features = {}, knownFeatureKeys = []) {
+const SURVEY_SOURCE_LABELS = {
+  search: 'Search',
+  friend: 'Friend or colleague',
+  youtube: 'YouTube',
+  reddit: 'Reddit or forums',
+  social: 'Social media',
+  other: 'Other',
+  none: 'No answer'
+}
+
+const SURVEY_USE_LABELS = {
+  admin: 'Server administration',
+  ssh: 'SSH terminal',
+  monitor: 'Server monitoring',
+  other: 'Other'
+}
+
+function surveyBarTable(title, labels, counts, base) {
+  const rows = Object.entries(labels).map(([key, label]) => {
+    const n = counts[key] ?? 0
+    const p = base ? Math.round((n / base) * 100) : 0
+    return `
+      <tr>
+        <td>${label}</td>
+        <td class="hits"><span class="hit-count">${n.toLocaleString()}</span></td>
+        <td>
+          <div class="progress-wrap">
+            <div class="progress-bar"><div class="progress-fill bar-ok" style="width:${p}%"></div></div>
+            <span class="progress-label">${p}%</span>
+          </div>
+        </td>
+      </tr>`
+  }).join('')
+
+  return `<table>
+    <thead><tr><th>${title}</th><th>Responses</th><th>Share</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`
+}
+
+function surveyMatrix(byPair) {
+  const useKeys = Object.keys(SURVEY_USE_LABELS)
+  const head = useKeys.map(u => `<th>${SURVEY_USE_LABELS[u]}</th>`).join('')
+  const rows = Object.entries(SURVEY_SOURCE_LABELS).map(([source, label]) => {
+    const cells = useKeys.map(u => {
+      const n = byPair[`${source}__${u}`] ?? 0
+      return n ? `<td><span class="hit-count">${n.toLocaleString()}</span></td>` : '<td><span class="muted">0</span></td>'
+    }).join('')
+    return `<tr><td>${label}</td>${cells}</tr>`
+  }).join('')
+
+  return `<table>
+    <thead><tr><th>Found us via ↓ / uses it for →</th>${head}</tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`
+}
+
+function surveyRecentDays(byDay) {
+  const days = Object.keys(byDay)
+    .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort()
+    .reverse()
+    .slice(0, 14)
+  if (!days.length) return ''
+
+  const rows = days.map(d => `<tr><td>${d}</td><td class="hits"><span class="hit-count">${byDay[d].toLocaleString()}</span></td></tr>`).join('')
+  return `<table>
+    <thead><tr><th>Last 14 days (UTC)</th><th>Responses</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`
+}
+
+function surveySection(survey) {
+  if (!survey) return '<div class="table-wrap"><div class="empty">Survey stats unavailable right now.</div></div>'
+  if (!survey.total) return '<div class="table-wrap"><div class="empty">No onboarding survey responses yet.</div></div>'
+
+  return `
+    <div class="stats">
+      <div class="card sub-card">
+        <div class="label">Responses</div>
+        <div class="value">${survey.total.toLocaleString()}</div>
+      </div>
+      <div class="card">
+        <div class="label">Last response</div>
+        <div class="value" style="font-size:1rem">${fmtDate(survey.updatedAt)}</div>
+      </div>
+    </div>
+    <div class="table-wrap">${surveyBarTable('How they found ServerKit', SURVEY_SOURCE_LABELS, survey.bySource, survey.total)}</div>
+    <div class="table-wrap">${surveyBarTable('What they use it for (multi-select, share of all responses)', SURVEY_USE_LABELS, survey.byUse, survey.total)}</div>
+    <div class="table-wrap">${surveyMatrix(survey.byPair)}</div>
+    ${surveyRecentDays(survey.byDay) ? `<div class="table-wrap">${surveyRecentDays(survey.byDay)}</div>` : ''}`
+}
+
+export function adminHTML(tokens, settings, subscribers, limits, perMinute, adminToken, trialUsers = [], envTrialCfg = {}, deviceCount = 0, features = {}, knownFeatureKeys = [], survey = null) {
   const active         = tokens.filter(t => !t.revokedAt)
   const revoked        = tokens.filter(t => t.revokedAt)
   const skipDebug      = !!settings.skipDebugPackages
@@ -339,6 +432,9 @@ export function adminHTML(tokens, settings, subscribers, limits, perMinute, admi
         <button class="btn-reset" onclick="saveTrialWindowConfig()">Save</button>
       </div>
     </div>
+
+    <div class="section-title" style="margin-top:32px">Onboarding Survey</div>
+    ${surveySection(survey)}
 
     <div class="section-title" style="margin-top:32px">Send Notification</div>
     <div class="settings-bar" style="align-items:flex-start;flex-direction:column;gap:12px">
