@@ -10,6 +10,10 @@ import { getSurveyStats, getTodayStats, getRecentResponses } from '../services/s
 import { sendTestMessage } from '../services/surveyNotifier.js'
 import { analysisBusy, deliverAnalysis } from '../services/analytics/delivery.js'
 import { MAX_DAYS } from '../services/analytics/report.js'
+import { schedulerStatus } from '../services/analytics/scheduler.js'
+import { bigQueryConfigured } from '../services/analytics/bigquery.js'
+import { usUserCap } from '../services/analytics/audience.js'
+import { telegramConfigured } from '../services/telegram.js'
 
 const STALE_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
@@ -211,6 +215,22 @@ export async function adminRoutes(app) {
     }
     const result = await sendTestMessage()
     return reply.code(result.sent ? 200 : 502).send(result)
+  })
+
+  // GET /admin/analysis/status - is the nightly timer armed, when does it
+  // fire next, which days already ran, and are the pieces configured.
+  app.get('/admin/analysis/status', async (request, reply) => {
+    if (!isAuthorized(request)) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+    const ran = await db.collection('analysisRuns').listDocuments().catch(() => [])
+    return {
+      scheduler: schedulerStatus(),
+      configured: { telegram: telegramConfigured(), bigQuery: bigQueryConfigured(), deepseek: Boolean(getEnv('ANALYTICS_DEEPSEEK_API_KEY')) },
+      usUserCap: usUserCap(),
+      busy: analysisBusy(),
+      recentScheduledRuns: ran.map(d => d.id).sort().reverse().slice(0, 5)
+    }
   })
 
   // POST /admin/analysis/run?days=7 - run the analytics analysis now and send

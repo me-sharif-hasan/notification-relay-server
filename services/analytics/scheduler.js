@@ -33,10 +33,24 @@ async function runDaily(retry = true) {
   if (retry && result.reason !== 'busy') setTimeout(() => runDaily(false).catch(() => {}), RETRY_AFTER_MS)
 }
 
+let nextRunAt = null
+
+export function schedulerStatus() {
+  return {
+    armed: nextRunAt !== null,
+    nextRunUtc: nextRunAt?.toISOString() ?? null,
+    nextRunGmt6: nextRunAt ? new Date(nextRunAt.getTime() + 6 * 3_600_000).toISOString().replace('T', ' ').slice(0, 16) + ' (GMT+6)' : null
+  }
+}
+
 export function startDailyAnalysis() {
-  const arm = () => setTimeout(() => {
-    runDaily().catch(() => {}).finally(arm)
-  }, msUntilNextRun())
+  const arm = () => {
+    const wait = msUntilNextRun()
+    nextRunAt = new Date(Date.now() + wait)
+    setTimeout(() => {
+      runDaily().catch(() => {}).finally(arm)
+    }, wait)
+  }
   arm()
 
   const hour = new Date().getUTCHours()

@@ -69,7 +69,7 @@ async function readLayout(day) {
   const schema = (await request(tablesUrl(`/events_${day}`))).schema.fields
   const sub = (column, field) => schema.find(f => f.name === column)?.fields?.findIndex(f => f.name === field) ?? -1
   return {
-    order: schema.map(f => f.name).filter(name => COLUMNS.includes(name)),
+    names: schema.map(f => f.name),
     countryIdx: sub('geo', 'country'),
     versionIdx: sub('app_info', 'version')
   }
@@ -108,18 +108,18 @@ export function toEvent(cells, { order, countryIdx, versionIdx }) {
   }
 }
 
-// Yields parsed events for one day, one page at a time.
-export async function* streamDay(day, limit = Infinity) {
-  const cols = await layout(day)
+export const AUDIENCE_COLUMNS = ['user_pseudo_id', 'geo']
+
+// Yields parsed events for one day, one page at a time. A narrower `columns`
+// list makes the read much lighter (event_params is the bulk of each row).
+export async function* streamDay(day, { columns = COLUMNS } = {}) {
+  const { names, countryIdx, versionIdx } = await layout(day)
+  const cols = { order: names.filter(name => columns.includes(name)), countryIdx, versionIdx }
   let pageToken = ''
-  let seen = 0
   do {
-    const query = `maxResults=${PAGE_SIZE}&selectedFields=${COLUMNS.join(',')}${pageToken ? `&pageToken=${pageToken}` : ''}`
+    const query = `maxResults=${PAGE_SIZE}&selectedFields=${columns.join(',')}${pageToken ? `&pageToken=${pageToken}` : ''}`
     const data = await request(tablesUrl(`/events_${day}/data?${query}`))
-    for (const row of data.rows ?? []) {
-      if (seen++ >= limit) return
-      yield toEvent(row.f, cols)
-    }
+    for (const row of data.rows ?? []) yield toEvent(row.f, cols)
     pageToken = data.pageToken
   } while (pageToken)
 }

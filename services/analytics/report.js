@@ -1,5 +1,6 @@
-import { bigQueryConfigured, listEventDays, streamDay } from './bigquery.js'
-import { createCollector, halfChange, unusedFeatures } from './eventStats.js'
+import { AUDIENCE_COLUMNS, bigQueryConfigured, listEventDays, streamDay } from './bigquery.js'
+import { createAudienceScan } from './audience.js'
+import { createCollector, featureOf, halfChange, unusedFeatures } from './eventStats.js'
 import { detectAnomalies } from './anomalies.js'
 import { runAgent } from './agent.js'
 import { KNOWN_FEATURES, NOISY_EVENTS } from './constants.js'
@@ -45,28 +46,58 @@ export function pickWindows(allDays, days) {
   return { latest, current, prior: prior.length === current.length ? prior : [] }
 }
 
-// Several days are read at once; the collector is synchronous and keyed by
+// Several days are read at once; the consumers are synchronous and keyed by
 // day, so the order they finish in does not matter.
-async function collect(dayList, rowBudget) {
-  const collector = createCollector(dayList)
+async function readEvents(dayList, onEvent, { columns, rowBudget = Infinity } = {}) {
   const queue = [...dayList]
   let rows = 0
   let truncated = false
 
   async function worker() {
     for (let day = queue.shift(); day && !truncated; day = queue.shift()) {
-      for await (const ev of streamDay(day)) {
+      for await (const ev of streamDay(day, { columns })) {
         if (rows >= rowBudget) {
           truncated = true
           return
         }
         rows++
-        collector.add(day, ev)
+        onEvent(day, ev)
       }
     }
   }
   await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, dayList.length) }, worker))
-  return { stats: collector.finish(), rows, truncated }
+  return { rows, truncated }
+}
+
+// Two passes: a light one decides who is in the audience, then the full read
+// counts only their events.
+async function collect(dayList, rowBudget) {
+  const scan = createAudienceScan()
+  await readEvents(dayList, (_day, ev) => scan.add(ev), { columns: AUDIENCE_COLUMNS, rowBudget })
+  const audience = scan.finish()
+
+  const collector = createCollector(dayList)
+  let skippedEvents = 0
+  const { rows, truncated } = await readEvents(dayList, (day, ev) => {
+    if (audience.allows(ev)) collector.add(day, ev)
+    else skippedEvents++
+  }, { rowBudget })
+
+  const stats = collector.finish()
+  stats.audience = {
+    usCap: audience.usCap,
+    noCountryUsers: audience.noCountryUsers,
+    droppedUsUsers: audience.droppedUsUsers,
+    skippedEvents
+  }
+  return { stats, rows, truncated }
+}
+
+function audienceLines(a) {
+  const parts = []
+  if (a?.noCountryUsers) parts.push(`${num(a.noCountryUsers)} users with no country`)
+  if (a?.droppedUsUsers) parts.push(`${num(a.droppedUsUsers)} US users beyond the cap of ${a.usCap} (the ${a.usCap} quietest are kept)`)
+  return parts.length ? [`Left out of this analysis: ${parts.join(' and ')}, ${num(a.skippedEvents)} events in all.`] : []
 }
 
 function featureRanking(stats) {
@@ -109,6 +140,7 @@ export function formatReport({ stats, prior, anomalies, now, truncated }) {
     `📅 ${fmtNow(now)}`,
     `🗓 Window: ${fmtDay(stats.days[0])} to ${fmtDay(stats.days.at(-1))} (${stats.days.length} days with data)`,
     'GA4 exports lag about a day, so the newest day is the latest finished one.',
+    ...audienceLines(stats.audience),
     '',
     '📈 Events',
     `• Total events: ${num(t.events)}${change(t.events, p?.events)}`,
@@ -140,7 +172,7 @@ function overviewObject(stats, prior, anomalies, level) {
     window: { from: stats.days[0], to: stats.days.at(-1), daysWithData: stats.days.length },
     totals: { events: t.events, activeUsers: t.users, sessions: t.sessions, newInstalls: t.newInstalls, uninstalls: t.uninstalls, net: t.newInstalls - t.uninstalls },
     ...(prior ? { previousPeriodTotals: { events: prior.totals.events, activeUsers: prior.totals.users, newInstalls: prior.totals.newInstalls, uninstalls: prior.totals.uninstalls } } : {}),
-    SPIKES: anomalies.map(a => ({ event: a.event, kind: a.kind, latestDay: a.recent, usualPerDay: a.baseline, ratio: a.ratio, usersOnLatestDay: a.users })),
+    SPIKES: anomalies.map(a => ({ event: a.event, feature: featureOf(a.event, {}), kind: a.kind, latestDay: a.recent, usualPerDay: a.baseline, ratio: a.ratio, usersOnLatestDay: a.users })),
     topProductEvents: productEvents(stats, small ? 6 : 12).map(([name, e]) => [name, e.total, e.users, e.total >= 20 ? halfChange(e.daily) : null]),
     featuresByUsers: {
       top: cut(f.ranked, small ? 4 : 6).map(x => [x.name, x.users, x.events]),
@@ -148,6 +180,11 @@ function overviewObject(stats, prior, anomalies, level) {
       neverUsed: f.neverUsed.slice(0, 12)
     },
     funnelUsers: stats.funnel,
+    audienceRules: stats.audience && {
+      usersWithNoCountryExcluded: stats.audience.noCountryUsers,
+      usUsersExcludedOverCap: stats.audience.droppedUsUsers,
+      usUserCap: stats.audience.usCap
+    },
     legend: 'event arrays are [name, total events, distinct users, change % of second half vs first half]'
   }
   if (level < 2) {
