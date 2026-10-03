@@ -2,6 +2,7 @@ import { admin, db } from '../firebase.js'
 import { getSettings } from '../services/settings.js'
 import { isRateLimited } from '../services/rateLimitMemory.js'
 import { getEnv } from '../config.js'
+import { muteStatus } from '../services/muteState.js'
 
 const TOKENS = 'integrationTokens'
 
@@ -43,6 +44,15 @@ export async function alertRoutes(app) {
       lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
       hitCount: admin.firestore.FieldValue.increment(1)
     })
+
+    if (muteStatus(doc.data()).muted) {
+      await docRef.update({
+        mutedHitCount: admin.firestore.FieldValue.increment(1),
+        lastMutedAt: admin.firestore.FieldValue.serverTimestamp()
+      })
+      app.log.info({ tokenHash: token, metric, level, action: 'skipped_muted' })
+      return { success: true, muted: true }
+    }
 
     const settings = await getSettings()
     if (settings.skipDebugPackages && packageName?.endsWith('.debug')) {

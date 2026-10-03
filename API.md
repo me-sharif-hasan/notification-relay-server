@@ -85,6 +85,43 @@ Content-Type: application/json
 
 ---
 
+### 2b. Mute, Unmute and Status
+
+Silence alerts for one token (one phone) without revoking it. While muted, `POST /alert` still answers `200` but sends no push, so the VPS agent keeps running and needs no change. A timed mute ends by itself, with no call from the app.
+
+**`POST /integrations/token/mute`**
+```http
+POST /integrations/token/mute
+Content-Type: application/json
+
+{ "token": "a3f9c2e1d5b8...", "minutes": 90 }
+```
+Send `"indefinite": true` instead of `minutes` to mute until unmuted. `minutes` is a whole number from 1 to 10080 (7 days).
+
+**`DELETE /integrations/token/mute`** with body `{ "token": "..." }` resumes alerts.
+
+**`POST /integrations/token/status`** with body `{ "token": "..." }` returns the current state.
+
+All three return the state:
+```json
+{
+  "muted": true,
+  "indefinite": false,
+  "until": "2026-06-11T11:30:00.000Z"
+}
+```
+`until` is `null` when not muted or when muted indefinitely. An elapsed mute reads as `muted: false`.
+
+**Errors**
+| Code | Reason |
+|------|--------|
+| `400` | Missing `token`, or `minutes` out of range and `indefinite` not `true` |
+| `401` | Token revoked |
+| `404` | Token not found |
+| `429` | Too many requests for this token |
+
+---
+
 ### 3. Receive Alert (VPS Agent — for reference)
 
 **`POST /alert`**
