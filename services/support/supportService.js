@@ -21,11 +21,23 @@ export function publicMessage(message) {
   }
 }
 
+export const LIMITS = {
+  perMinute: 6,
+  perDay: 1000,
+  globalPerMinute: 300,
+  imageMessagesPerDay: 60,
+  globalImageMessagesPerMinute: 30,
+  telegramForwardsPerHour: 60
+}
+
 export function createLimiters(now = Date.now) {
   return {
-    minute: createWindowLimiter({ windowMs: 60_000, max: 6, now }),
-    day: createWindowLimiter({ windowMs: 86_400_000, max: 60, now }),
-    global: createWindowLimiter({ windowMs: 60_000, max: 300, now })
+    minute: createWindowLimiter({ windowMs: 60_000, max: LIMITS.perMinute, now }),
+    day: createWindowLimiter({ windowMs: 86_400_000, max: LIMITS.perDay, now }),
+    global: createWindowLimiter({ windowMs: 60_000, max: LIMITS.globalPerMinute, now }),
+    imageDay: createWindowLimiter({ windowMs: 86_400_000, max: LIMITS.imageMessagesPerDay, now }),
+    imageGlobal: createWindowLimiter({ windowMs: 60_000, max: LIMITS.globalImageMessagesPerMinute, now }),
+    forward: createWindowLimiter({ windowMs: 3_600_000, max: LIMITS.telegramForwardsPerHour, now })
   }
 }
 
@@ -36,8 +48,11 @@ export function createSupportService({
   getSupportChatId = async () => null,
   limiters = createLimiters()
 }) {
-  function checkLimits(installId) {
+  function checkLimits(installId, hasImages) {
     if (!limiters.global.take('all') || !limiters.minute.take(installId) || !limiters.day.take(installId)) {
+      throw new SupportError(429, 'rate_limited')
+    }
+    if (hasImages && (!limiters.imageGlobal.take('all') || !limiters.imageDay.take(installId))) {
       throw new SupportError(429, 'rate_limited')
     }
   }
@@ -67,6 +82,8 @@ export function createSupportService({
   const pending = new Set()
 
   async function forward(thread, validated) {
+    // Everything is stored; only the Telegram copy is capped so one install cannot flood the chat.
+    if (!limiters.forward.take(thread.installId)) return null
     const summary = contextSummary(validated.context)
     const topicText = [summary, summary ? '' : null, validated.text || '(images only)']
       .filter(line => line !== null)
@@ -93,8 +110,11 @@ export function createSupportService({
 
   return {
     async submitUserMessage(body, { country = 'unknown' } = {}) {
+      // Limits first, so a flood of large bodies is refused before any image is decoded.
+      if (isInstallId(body?.installId)) {
+        checkLimits(body.installId, Array.isArray(body.images) && body.images.length > 0)
+      }
       const validated = validateMessage(body)
-      checkLimits(validated.installId)
       const thread = await openThread(validated.installId, { ...validated, country })
       const attachmentCount = validated.images.length + (validated.logs ? 1 : 0)
       const message = await store.addMessage(validated.installId, {

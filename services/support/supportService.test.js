@@ -125,6 +125,53 @@ test('writing is rate limited per install and recovers after the window', async 
   await send(service)
 })
 
+test('an install may send 1000 messages a day and not one more', async () => {
+  const { service, clock } = setup()
+  for (let i = 0; i < 1000; i++) {
+    if (i % 6 === 0) clock.t += 61_000
+    await send(service, { text: `m${i}` })
+  }
+  clock.t += 61_000
+  await assert.rejects(send(service), err => err.status === 429)
+  clock.t += 86_400_000
+  assert.equal((await send(service)).delivered, true, 'a new day starts clean')
+})
+
+test('limits are checked before any screenshot is decoded', async () => {
+  const { service, calls } = setup()
+  for (let i = 0; i < 6; i++) await send(service)
+  const data = Buffer.alloc(1024, 1).toString('base64')
+  await assert.rejects(
+    send(service, { images: [{ mime: 'image/png', data }] }),
+    err => err.status === 429
+  )
+  assert.equal(calls.deliver.length, 6)
+})
+
+test('screenshots have their own daily allowance', async () => {
+  const { service, clock } = setup()
+  const images = [{ mime: 'image/png', data: Buffer.alloc(64, 1).toString('base64') }]
+  for (let i = 0; i < 60; i++) {
+    if (i % 6 === 0) clock.t += 61_000
+    await send(service, { text: '', images })
+  }
+  clock.t += 61_000
+  await assert.rejects(send(service, { text: '', images }), err => err.status === 429)
+  assert.equal((await send(service, { text: 'text only still works' })).delivered, true)
+})
+
+test('only a capped number of messages per hour are copied to Telegram, but all are stored', async () => {
+  const { store, service, calls, clock } = setup()
+  for (let i = 0; i < 70; i++) {
+    if (i % 6 === 0) clock.t += 61_000
+    await send(service, { text: `m${i}` })
+  }
+  await service.settled()
+  assert.equal(calls.deliver.length, 60)
+  assert.equal((await store.listMessages(ID, { limit: 500 })).length, 70)
+  assert.equal((await store.getThread(ID)).forwardError, true, 'the developer sees it in /inbox')
+})
+
 test('one noisy install does not use up another install\'s allowance', async () => {
   const { service } = setup()
   for (let i = 0; i < 6; i++) await send(service)

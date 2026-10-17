@@ -59,8 +59,10 @@ export function createSupportTelegram({ call = telegramCall, store, getSupportCh
     if (!sent.ok) return sent
     await afterSend?.(sent.result.message_id)
     for (const image of images) {
-      const photo = await sendOne(chatId, topicId, 'sendPhoto', {}, { ...image, field: 'photo' })
-      if (photo.ok) await afterSend?.(photo.result.message_id)
+      let shown = await sendOne(chatId, topicId, 'sendPhoto', {}, { ...image, field: 'photo' })
+      // Telegram refuses photos with extreme proportions; a file keeps the screenshot readable.
+      if (!shown.ok) shown = await sendOne(chatId, topicId, 'sendDocument', {}, { ...image, field: 'document' })
+      if (shown.ok) await afterSend?.(shown.result.message_id)
     }
     if (logs) {
       const buffer = Buffer.from(logs, 'utf8')

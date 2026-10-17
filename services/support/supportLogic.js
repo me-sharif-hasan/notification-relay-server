@@ -3,7 +3,8 @@ import { createHash } from 'crypto'
 export const KINDS = ['problem', 'question', 'idea']
 export const MAX_TEXT = 2000
 export const MAX_IMAGES = 3
-export const MAX_IMAGE_BYTES = 4 * 1024 * 1024
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+export const MAX_REQUEST_BYTES = Math.ceil((MAX_IMAGES * MAX_IMAGE_BYTES * 4) / 3) + 1024 * 1024
 export const MAX_LOG_CHARS = 60_000
 export const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp']
 

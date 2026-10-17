@@ -114,6 +114,18 @@ test('screenshots and the log file are sent after the text', async () => {
   assert.equal(calls[3].file.buffer.toString(), 'line one')
 })
 
+test('a screenshot Telegram will not show as a photo is sent as a file instead', async () => {
+  const { store, telegram, calls } = setup({
+    respond: method => (method === 'sendPhoto' ? { ok: false, description: 'PHOTO_INVALID_DIMENSIONS' } : undefined)
+  })
+  const images = [{ buffer: Buffer.from('tall'), name: 'tall.png', mime: 'image/png' }]
+  const out = await telegram.deliver(await newThread(store), content({ images }))
+  assert.equal(out.route, 'topic')
+  assert.deepEqual(methods(calls), ['createForumTopic', 'sendMessage', 'sendPhoto', 'sendDocument'])
+  assert.equal(calls[3].file.field, 'document')
+  assert.equal(calls[3].file.name, 'tall.png')
+})
+
 test('owner chat attachments are mapped too so a reply to any of them routes', async () => {
   const { store, telegram } = setup({ supportChatId: null })
   const images = [{ buffer: Buffer.from('a'), name: 's.png', mime: 'image/png' }]

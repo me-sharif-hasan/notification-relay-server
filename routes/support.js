@@ -1,7 +1,7 @@
 import { requireJwt } from '../middleware/requireJwt.js'
-import { SupportError, parseCountry } from '../services/support/supportLogic.js'
+import { MAX_REQUEST_BYTES, SupportError, parseCountry } from '../services/support/supportLogic.js'
 
-const BODY_LIMIT = 18 * 1024 * 1024
+const BODY_LIMIT = MAX_REQUEST_BYTES
 
 function fail(request, reply, err) {
   if (err instanceof SupportError) return reply.code(err.status).send({ success: false, error: err.code })

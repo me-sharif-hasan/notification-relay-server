@@ -131,6 +131,18 @@ test('an unexpected failure is a plain 500 that leaks nothing', async () => {
   assert.deepEqual(res.json(), { success: false, error: 'server_error' })
 })
 
+test('a 10 MB screenshot passes the request body limit and a bigger one is refused with 413', async () => {
+  const { app, delivered } = await build()
+  const base64Of = bytes => 'A'.repeat(Math.ceil((bytes * 4) / 3))
+  const ok = await post(app, { installId: ID, text: '', images: [{ mime: 'image/png', data: base64Of(10 * 1024 * 1024) }] })
+  assert.equal(ok.statusCode, 200)
+  assert.equal(delivered[0].content.images[0].buffer.length, 10 * 1024 * 1024)
+
+  const tooBig = await post(app, { installId: ID, text: '', images: [{ mime: 'image/png', data: base64Of(11 * 1024 * 1024) }] })
+  assert.equal(tooBig.statusCode, 413)
+  assert.equal(tooBig.json().error, 'image_too_large')
+})
+
 test('screenshots up to the size cap are accepted', async () => {
   const { app, delivered } = await build()
   const data = Buffer.alloc(300 * 1024, 1).toString('base64')

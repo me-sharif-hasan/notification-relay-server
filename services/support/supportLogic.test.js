@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  MAX_IMAGES,
+  MAX_IMAGE_BYTES,
+  MAX_REQUEST_BYTES,
   SupportError,
   contextSummary,
   createWindowLimiter,
@@ -63,8 +66,17 @@ test('images are checked for count, type, encoding and size', () => {
   rejects(() => validateMessage({ installId: ID, text: 'x', images: [ok, ok, ok, ok] }), 400, 'too_many_images')
   rejects(() => validateMessage({ installId: ID, text: 'x', images: [{ mime: 'image/gif', data: png }] }), 400, 'invalid_image')
   rejects(() => validateMessage({ installId: ID, text: 'x', images: [{ mime: 'image/png', data: 'not base64 !!' }] }), 400, 'invalid_image')
-  const huge = 'A'.repeat(Math.ceil((4 * 1024 * 1024 * 4) / 3) + 8)
-  rejects(() => validateMessage({ installId: ID, text: 'x', images: [{ mime: 'image/png', data: huge }] }), 413, 'image_too_large')
+  const base64Of = bytes => 'A'.repeat(Math.ceil((bytes * 4) / 3))
+  const atLimit = base64Of(MAX_IMAGE_BYTES)
+  assert.equal(validateMessage({ installId: ID, text: 'x', images: [{ mime: 'image/png', data: atLimit }] }).images.length, 1)
+  const over = base64Of(MAX_IMAGE_BYTES + 1024)
+  rejects(() => validateMessage({ installId: ID, text: 'x', images: [{ mime: 'image/png', data: over }] }), 413, 'image_too_large')
+})
+
+test('the largest allowed message fits the request body limit', () => {
+  const biggest = Math.ceil((MAX_IMAGES * MAX_IMAGE_BYTES * 4) / 3)
+  assert.equal(MAX_IMAGE_BYTES, 10 * 1024 * 1024)
+  assert.ok(MAX_REQUEST_BYTES > biggest, 'room for the text and the JSON around the images')
 })
 
 test('secrets in text are removed before anything is stored or forwarded', () => {
