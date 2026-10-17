@@ -27,6 +27,14 @@ test('it tells people how to ask and who to ask', async () => {
   assert.match(body, /within 30 days/)
 })
 
+test('every email address is shielded from Cloudflare address rewriting', async () => {
+  const { body } = await (await build()).inject({ method: 'GET', url: '/delete-data' })
+  const outside = body.replace(/<!--email_off-->[\s\S]*?<!--\/email_off-->/g, '')
+  assert.ok(body.includes('shanto@iishanto.com'))
+  assert.ok(!outside.includes('shanto@iishanto.com'), 'an address outside the markers would be replaced by [email protected]')
+  assert.equal((body.match(/<!--email_off-->/g) ?? []).length, (body.match(/<!--\/email_off-->/g) ?? []).length)
+})
+
 test('it links back to the privacy policy with an absolute address', async () => {
   const { body } = await (await build()).inject({ method: 'GET', url: '/delete-data' })
   assert.ok(body.includes('href="https://iishanto.com/app/serverkit/privacy-policy.html"'))

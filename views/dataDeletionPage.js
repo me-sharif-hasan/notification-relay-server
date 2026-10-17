@@ -1,6 +1,10 @@
 const CONTACT = 'shanto@iishanto.com'
 const POLICY_URL = 'https://iishanto.com/app/serverkit/privacy-policy.html'
 
+// Cloudflare rewrites visible addresses into "[email protected]" and relies on a
+// script this page's policy blocks, so the address is kept out of that rewrite.
+const keepEmail = html => `<!--email_off-->${html}<!--/email_off-->`
+
 export const DATA_DELETION_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -27,7 +31,7 @@ export const DATA_DELETION_HTML = `<!DOCTYPE html>
 
     <h2>How to request deletion</h2>
     <div class="box">
-        <p>Email <a href="mailto:${CONTACT}?subject=ServerKit%20data%20deletion">${CONTACT}</a> with the subject <strong>ServerKit data deletion</strong> and tell us which data to delete (see the list below). We reply to confirm once it is done, normally within 30 days.</p>
+        <p>Email ${keepEmail(`<a href="mailto:${CONTACT}?subject=ServerKit%20data%20deletion">${CONTACT}</a>`)} with the subject <strong>ServerKit data deletion</strong> and tell us which data to delete (see the list below). We reply to confirm once it is done, normally within 30 days.</p>
     </div>
     <p>Deletion is permanent and cannot be undone.</p>
 
@@ -47,7 +51,7 @@ export const DATA_DELETION_HTML = `<!DOCTYPE html>
     </ul>
 
     <h2>Questions</h2>
-    <p>Contact the ServerKit developer at <a href="mailto:${CONTACT}">${CONTACT}</a>.</p>
+    <p>Contact the ServerKit developer at ${keepEmail(`<a href="mailto:${CONTACT}">${CONTACT}</a>`)}.</p>
 </body>
 </html>
 `
