@@ -120,6 +120,7 @@ export async function registerWebhook() {
     await post('setMyCommands', {
       commands: [
         { command: 'analysis', description: 'Analyze the last N days of app analytics' },
+        { command: 'inbox', description: 'List open support threads' },
         { command: 'help', description: 'Show what I can do' }
       ]
     })

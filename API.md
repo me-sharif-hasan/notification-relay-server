@@ -229,6 +229,38 @@ FCM tokens can rotate (app reinstall, device restore, etc.). When this happens:
 
 ---
 
+## Support chat
+
+All routes need `Authorization: Bearer <jwt>` from `POST /api/auth/integrity-token`. `installId` is a random UUID the app creates once and keeps; it is the only identity of a thread. The relay stores the country from Cloudflare's `cf-ipcountry` header and never the IP.
+
+### POST /support/messages
+
+```json
+{ "installId": "<uuid>", "kind": "problem|question|idea", "text": "...",
+  "context": { "appVersion": "2.5.8", "androidVersion": "14", "lastError": "..." },
+  "images": [{ "mime": "image/png", "data": "<base64>" }] }
+```
+
+Up to 2000 characters and 3 images of 4 MB each. Secrets (private keys, `password=`, bearer tokens) are removed before anything is stored. Returns `{ success, message, delivered }`. The message is stored first and forwarded to Telegram in the background, so `delivered: true` means received.
+
+Errors: 400 `invalid_install_id`, `empty_message`, `text_too_long`, `too_many_images`, `invalid_image`; 403 `blocked`; 413 `image_too_large`; 429 `rate_limited` (6 per minute and 60 per day per install).
+
+### GET /support/messages?installId=&after=&markRead=1
+
+Messages with an id greater than `after`, oldest first, plus `unread` (replies not yet read). `markRead=1` clears the unread count.
+
+### GET /support/unread?installId=
+
+`{ success, unread }`. Cheap enough to call at launch.
+
+### Replies
+
+The developer answers inside the user's topic in the Telegram support group, or by replying to a forwarded message in the owner chat when no group is set. The relay stores the reply and sends an FCM message with `data.type = support_reply` on the `support_replies` channel to the token registered through `POST /devices/token`.
+
+Owner commands: `/setup` (in the group, once), `/inbox`, and inside a topic `/close`, `/block`, `/unblock`, `/info`.
+
+---
+
 ## Error Reference
 
 | Code | Meaning | Action |

@@ -38,7 +38,17 @@ async function startAnalysis(chatId, rawDays, question) {
 
 // Only the owner's private chat is served. Anyone else, and anything that is
 // not a recognised message, is ignored without a reply.
-export async function handleUpdate(update, now = Date.now()) {
+async function handledBySupport(update) {
+  try {
+    const { getSupport } = await import('../services/support/supportWiring.js')
+    return await getSupport().bridge.handleUpdate(update)
+  } catch {
+    return false
+  }
+}
+
+export async function handleUpdate(update, now = Date.now(), supportHandler = handledBySupport) {
+  if (await supportHandler(update)) return
   const message = update?.message
   const ownerId = String(getEnv('TELEGRAM_CHAT_ID') ?? '')
   if (!message?.text || message.chat?.type !== 'private') return
