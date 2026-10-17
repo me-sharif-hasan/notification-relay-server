@@ -10,7 +10,7 @@ const OTHER = '9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d'
 function setup({ deliver, supportChatId = '-100', clock = { t: 1000 } } = {}) {
   const now = () => clock.t
   const store = createMemoryStore({ now })
-  const calls = { deliver: [], reopen: [], push: [] }
+  const calls = { deliver: [], reopen: [], push: [], deletedTopics: [], deletedTokens: [] }
   const telegram = {
     async deliver(thread, content) {
       calls.deliver.push({ thread, content })
@@ -18,6 +18,9 @@ function setup({ deliver, supportChatId = '-100', clock = { t: 1000 } } = {}) {
     },
     async reopenTopic(chatId, topicId) {
       calls.reopen.push([chatId, topicId])
+    },
+    async deleteTopic(chatId, topicId) {
+      calls.deletedTopics.push([chatId, topicId])
     }
   }
   const push = {
@@ -31,6 +34,9 @@ function setup({ deliver, supportChatId = '-100', clock = { t: 1000 } } = {}) {
     telegram,
     push,
     getSupportChatId: async () => supportChatId,
+    deleteDeviceToken: async id => {
+      calls.deletedTokens.push(id)
+    },
     limiters: createLimiters(now)
   })
   return { store, service, calls, clock }
@@ -229,6 +235,42 @@ test('an unknown install has an empty thread, and a bad id is refused', async ()
   assert.deepEqual(await service.listForUser(ID), { messages: [], unread: 0 })
   assert.deepEqual(await service.unreadFor(OTHER), { unread: 0 })
   await assert.rejects(service.listForUser('nope'), err => err.code === 'invalid_install_id')
+})
+
+test('deleting a conversation removes the messages, the topic and the push token', async () => {
+  const { store, service, calls } = setup()
+  await send(service)
+  await store.updateThread(ID, { topicId: 7 })
+  await store.mapTelegramMessage('42', 5, ID)
+
+  assert.equal(await service.deleteConversation(ID), true)
+
+  assert.equal(await store.getThread(ID), null)
+  assert.deepEqual(await store.listMessages(ID), [])
+  assert.equal(await store.lookupTelegramMessage('42', 5), null)
+  assert.deepEqual(calls.deletedTopics, [['-100', 7]])
+  assert.deepEqual(calls.deletedTokens, [ID])
+  assert.deepEqual(await service.listForUser(ID), { messages: [], unread: 0 })
+})
+
+test('deleting a conversation that does not exist is a no-op', async () => {
+  const { service, calls } = setup()
+  assert.equal(await service.deleteConversation(ID), false)
+  assert.deepEqual(calls.deletedTokens, [])
+})
+
+test('a topic Telegram cannot delete does not stop the data from being erased', async () => {
+  const { store, service } = setup()
+  await send(service)
+  await store.updateThread(ID, { topicId: 7 })
+  const failing = createSupportService({
+    store,
+    telegram: { deleteTopic: async () => { throw new Error('gone') } },
+    push: { notifyReply: async () => ({ sent: true }) },
+    getSupportChatId: async () => '-100'
+  })
+  assert.equal(await failing.deleteConversation(ID), true)
+  assert.equal(await store.getThread(ID), null)
 })
 
 test('a thread is private to its install', async () => {

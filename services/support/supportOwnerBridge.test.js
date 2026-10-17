@@ -23,6 +23,9 @@ function setup({ supportChatId = GROUP, probe = { ok: true }, pushed = { sent: t
     async closeTopic(chatId, topicId) {
       ops.push(['close', chatId, topicId])
     },
+    async deleteTopic(chatId, topicId) {
+      ops.push(['delete', chatId, topicId])
+    },
     async reopenTopic() {},
     async probeTopics() {
       return probe
@@ -100,6 +103,14 @@ test('/close closes the thread and its topic', async () => {
   await ctx.bridge.handleUpdate(group('/close'))
   assert.equal((await ctx.store.getThread(ID)).status, 'closed')
   assert.deepEqual(ctx.ops, [['close', GROUP, 7]])
+})
+
+test('/delete erases the thread and its topic as a deletion request', async () => {
+  const ctx = setup()
+  await withThread(ctx)
+  await ctx.bridge.handleUpdate(group('/delete'))
+  assert.equal(await ctx.store.getThread(ID), null)
+  assert.deepEqual(ctx.ops, [['delete', GROUP, 7]])
 })
 
 test('/block and /unblock toggle the user', async () => {

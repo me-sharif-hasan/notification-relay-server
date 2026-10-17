@@ -1,7 +1,7 @@
 import { admin } from '../../firebase.js'
 import { getEnv } from '../../config.js'
 import { getSettings, updateSettings } from '../settings.js'
-import { getDeviceFcmToken } from '../deviceTokens.js'
+import { deleteDeviceToken, getDeviceFcmToken } from '../deviceTokens.js'
 import { createFirestoreStore } from './supportStore.js'
 import { createSupportTelegram } from './supportTelegram.js'
 import { createSupportPush } from './supportPush.js'
@@ -32,12 +32,11 @@ export function getSupport() {
     send: message => admin.messaging().send(message),
     getFcmToken: getDeviceFcmToken
   })
-  const service = createSupportService({ store, telegram, push, getSupportChatId })
+  const service = createSupportService({ store, telegram, push, getSupportChatId, deleteDeviceToken })
   const bridge = createOwnerBridge({ store, telegram, service, getSupportChatId, setSupportChatId, getOwnerId })
   const retention = createRetention({
     store,
-    telegram,
-    getSupportChatId,
+    deleteConversation: id => service.deleteConversation(id),
     days: Number(getEnv('SUPPORT_RETENTION_DAYS')) || 365
   })
   instance = { store, telegram, push, service, bridge, retention }

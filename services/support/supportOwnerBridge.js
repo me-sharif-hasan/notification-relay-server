@@ -7,6 +7,7 @@ const HELP = [
   '/close  closes the thread (a new message reopens it)',
   '/block  stops the user from writing, /unblock undoes it',
   '/info  shows what the app sent',
+  '/delete  erases the thread, this topic and the push token (a deletion request)',
   '',
   '/inbox  lists open threads',
   '/setup  (in the support group) connects the group'
@@ -66,6 +67,10 @@ export function createOwnerBridge({
     if (name === 'close') {
       await store.updateThread(thread.installId, { status: 'closed' })
       await telegram.closeTopic(message.chat.id, message.message_thread_id)
+      return
+    }
+    if (name === 'delete') {
+      await service.deleteConversation(thread.installId)
       return
     }
     if (name === 'block' || name === 'unblock') {

@@ -46,6 +46,7 @@ export function createSupportService({
   telegram,
   push,
   getSupportChatId = async () => null,
+  deleteDeviceToken = async () => {},
   limiters = createLimiters()
 }) {
   function checkLimits(installId, hasImages) {
@@ -130,6 +131,17 @@ export function createSupportService({
         .finally(() => pending.delete(delivery))
       pending.add(delivery)
       return { message: publicMessage(message), delivered: true }
+    },
+
+    // Removes everything kept for one install: messages, the Telegram topic and the push token.
+    async deleteConversation(installId) {
+      const thread = await store.getThread(installId)
+      if (!thread) return false
+      const chatId = await getSupportChatId()
+      if (chatId && thread.topicId) await telegram.deleteTopic(chatId, thread.topicId).catch(() => {})
+      await store.deleteThread(installId)
+      await deleteDeviceToken(installId).catch(() => {})
+      return true
     },
 
     // Resolves when every background forward has finished (tests, shutdown).
