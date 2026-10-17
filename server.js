@@ -13,6 +13,7 @@ import { deviceRoutes } from './routes/devices.js'
 import { featureRoutes } from './routes/features.js'
 import { surveyRoutes } from './routes/survey.js'
 import { supportRoutes } from './routes/support.js'
+import { dataDeletionRoutes } from './routes/dataDeletion.js'
 import { startRetention } from './services/support/supportRetention.js'
 import { telegramWebhookRoutes, setupTelegramWebhook } from './routes/telegramWebhook.js'
 import { startDailyAnalysis } from './services/analytics/scheduler.js'
@@ -32,6 +33,7 @@ app.register(deviceRoutes)
 app.register(featureRoutes)
 app.register(surveyRoutes)
 app.register(supportRoutes)
+app.register(dataDeletionRoutes)
 app.register(telegramWebhookRoutes)
 
 function startSupportRetention() {
